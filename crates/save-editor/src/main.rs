@@ -829,9 +829,16 @@ fn part_ids_for(folder: &str) -> &'static [i32] {
     PART_IDS.iter().find(|(f, _)| *f == folder).map(|(_, v)| *v).unwrap_or(&[])
 }
 
+/// Whether to surface the NPC/extra hairs in the picker. OFF until the companion
+/// "custom hair" mod ships: the base game maps `HeadGearID` to an index in a fixed
+/// ~20-entry skeletal-mesh array, so an NPC id (800001 → index ~799) runs off the
+/// end and CRASHES the game. The mod appends those meshes to the array, making the
+/// ids valid; only then is it safe to flip this on.
+const NPC_HAIR_ENABLED: bool = false;
+
 /// NPC-side extra ids for a part folder (only hair has any today).
 fn extra_ids_for(folder: &str) -> &'static [i32] {
-    if folder == "HeadGear" {
+    if NPC_HAIR_ENABLED && folder == "HeadGear" {
         NPC_HAIR
     } else {
         &[]
@@ -1245,11 +1252,13 @@ mod picker_tests {
     #[test]
     fn npc_hair_is_separate_from_creator_set() {
         let pc = part_ids_for("HeadGear");
-        let npc = extra_ids_for("HeadGear");
         assert_eq!(pc.len(), 20);
-        assert!(!npc.is_empty());
-        assert!(npc.iter().all(|id| !pc.contains(id))); // no overlap: clean PC/NPC split
-        assert!(npc.contains(&800001));
+        assert!(!NPC_HAIR.is_empty());
+        assert!(NPC_HAIR.iter().all(|id| !pc.contains(id))); // no overlap: clean PC/NPC split
+        assert!(NPC_HAIR.contains(&800001));
+        // Gated off until the custom-hair mod makes these ids safe (they crash the
+        // base game). extra_ids_for stays empty while the flag is off.
+        assert!(extra_ids_for("HeadGear").is_empty());
     }
 
     #[test]
