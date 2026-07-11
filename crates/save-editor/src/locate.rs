@@ -1,11 +1,15 @@
 //! Finding the game save + our working directory, cross-platform.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The save's path relative to a "LocalAppData" root.
 const REL: &str = "EchoesofAincrad/Saved/SaveGames/SaveData.sav";
 
-/// Locate `SaveData.sav`: Windows `%LOCALAPPDATA%`, or the Steam Proton prefix on Linux.
+/// Locate `SaveData.sav`: Windows `%LOCALAPPDATA%`, or the Steam Proton prefix on
+/// Linux. On Linux we ask `aml-host` to find the install (which handles multiple
+/// Steam libraries, other drives, and Flatpak) and look inside its Proton prefix;
+/// we also try the common Steam roots directly. The prefix user is globbed, not
+/// assumed to be `steamuser`. Users can always fall back to "Open save…".
 pub fn find_save() -> Option<PathBuf> {
     // Native Windows.
     if let Some(local) = std::env::var_os("LOCALAPPDATA") {
@@ -14,16 +18,46 @@ pub fn find_save() -> Option<PathBuf> {
             return Some(p);
         }
     }
-    // Linux + Proton: <steam>/steamapps/compatdata/2244210/pfx/drive_c/users/steamuser/AppData/Local/…
-    if let Some(home) = dirs_home() {
-        let prefix = home
-            .join(".local/share/Steam/steamapps/compatdata/2244210/pfx/drive_c/users/steamuser/AppData/Local")
-            .join(REL);
-        if prefix.is_file() {
-            return Some(prefix);
+    // Linux/Proton: use the game's detected Proton prefix (robust to library/drive).
+    if let Ok(game) = aml_host::find_game() {
+        if let aml_host::Runtime::Proton { prefix } = &game.runtime {
+            if let Some(p) = find_in_users(&prefix.join("drive_c/users")) {
+                return Some(p);
+            }
+        }
+    }
+    // Fallback: probe the common Steam roots' compatdata directly.
+    for base in linux_steam_bases() {
+        let users = base.join("steamapps/compatdata/2244210/pfx/drive_c/users");
+        if let Some(p) = find_in_users(&users) {
+            return Some(p);
         }
     }
     None
+}
+
+/// Look for `<users>/<any-user>/AppData/Local/<REL>` — the prefix user is often
+/// `steamuser` but isn't guaranteed, so we scan every user folder.
+fn find_in_users(users_dir: &Path) -> Option<PathBuf> {
+    for entry in std::fs::read_dir(users_dir).ok()?.flatten() {
+        let p = entry.path().join("AppData/Local").join(REL);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Common Steam install roots on Linux (mirrors aml-host's list), incl. Flatpak.
+fn linux_steam_bases() -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    if let Some(h) = dirs_home() {
+        v.push(h.join(".local/share/Steam"));
+        v.push(h.join(".steam/steam"));
+        v.push(h.join(".steam/root"));
+        v.push(h.join(".var/app/com.valvesoftware.Steam/.local/share/Steam"));
+    }
+    v
 }
 
 /// Where the editor keeps its working copy + extracted thumbnails.

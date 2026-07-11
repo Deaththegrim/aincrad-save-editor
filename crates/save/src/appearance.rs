@@ -178,7 +178,16 @@ fn apply(props: &mut Properties, name: &str, value: &FieldValue) -> bool {
         (Property::Str(slot), FieldValue::Str(v)) => *slot = v.clone(),
         (Property::Name(slot), FieldValue::Name(v)) => *slot = v.clone(),
         (Property::Enum(slot), FieldValue::Enum(v)) => *slot = v.clone(),
-        (Property::Byte(slot), FieldValue::Enum(v)) => *slot = Byte::Label(v.clone()),
+        // Preserve the byte's on-disk representation: a numeric ByteProperty must
+        // stay numeric (writing a label into it changes the serialized form and
+        // can corrupt the save). Refuse if the enum text isn't a number.
+        (Property::Byte(slot), FieldValue::Enum(v)) => match slot {
+            Byte::Byte(_) => match v.parse::<u8>() {
+                Ok(n) => *slot = Byte::Byte(n),
+                Err(_) => return false,
+            },
+            Byte::Label(_) => *slot = Byte::Label(v.clone()),
+        },
         (Property::Struct(StructValue::LinearColor(c)), FieldValue::Color(v)) => {
             *c = LinearColor { r: Float(v[0]), g: Float(v[1]), b: Float(v[2]), a: Float(v[3]) };
         }

@@ -746,6 +746,19 @@ fn identity_page(app: &mut App, ui: &mut egui::Ui) {
                     for (key, label) in [("Male", t.male), ("Female", t.female)] {
                         if ui.selectable_label(gender_short == key, label).clicked() && gender_short != key {
                             app.set("Gender", FieldValue::Enum(format!("{gender_prefix}{key}")));
+                            // Keep the voice consistent: the game only offers
+                            // gender-matching voices, so Player_M_06 <-> Player_F_06.
+                            if let Some(FieldValue::Name(v)) = app.field("Voice").map(|f| f.value.clone()) {
+                                let fixed = if key == "Female" {
+                                    v.replacen("Player_M", "Player_F", 1)
+                                } else {
+                                    v.replacen("Player_F", "Player_M", 1)
+                                };
+                                if fixed != v {
+                                    app.set("Voice", FieldValue::Name(fixed));
+                                }
+                            }
+                            app.note("Gender changed — voice matched to it. Double-check face/hair parts still suit the new body.");
                         }
                     }
                 });
@@ -778,6 +791,39 @@ fn identity_page(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
+/// The valid part IDs the game's character creator offers, per thumbnail folder.
+/// These are the SAVE ids (what the game stores), and they are NOT contiguous —
+/// face parts skip numbers, and hair (HeadGear) steps by 1000 (1001, 2001, …).
+/// Used to keep the no-thumbnail fallback stepper on real ids; when thumbnails are
+/// present, `available_ids` (read from the bundle) is the authoritative source.
+const PART_IDS: &[(&str, &[i32])] = &[
+    ("Nose", &[1, 2, 3, 4, 5, 6, 7, 8]),
+    ("Eyebrow", &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 18, 21, 22, 27, 28, 29]),
+    ("Eyeline", &[1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 19, 20, 22, 23, 24, 27, 28, 29, 33, 34]),
+    ("Pupil", &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+    ("Jaw", &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 30, 31, 32, 33, 34, 35, 36, 37, 38]),
+    ("HeadGear", &[1001, 2001, 3001, 4001, 5001, 6001, 7001, 8001, 9001, 10001, 11001, 12001, 13001, 14001, 15001, 16001, 17001, 18001, 19001, 20001]),
+    ("Mole", &[0, 1, 2, 3, 4, 5, 6, 7]),
+    ("Freckles", &[0, 1, 2]),
+];
+
+/// Step `cur` to the previous/next valid id for a part folder, staying within the
+/// real set (so we never write an id the game has no part for). Falls back to a
+/// plain ±1 only for a folder we have no id list for. An unrecognized `cur` snaps
+/// to the nearest valid id.
+fn step_part_id(folder: &str, cur: i32, delta: i32) -> i32 {
+    let Some(ids) = PART_IDS.iter().find(|(f, _)| *f == folder).map(|(_, v)| *v) else {
+        return cur + delta;
+    };
+    match ids.iter().position(|&v| v == cur) {
+        Some(i) => {
+            let next = (i as i32 + delta).clamp(0, ids.len() as i32 - 1) as usize;
+            ids[next]
+        }
+        None => *ids.iter().min_by_key(|&&v| (v - cur).abs()).unwrap_or(&cur),
+    }
+}
+
 fn pickers_page(app: &mut App, ui: &mut egui::Ui, pickers: &[Picker]) {
     for p in pickers {
         let Some(cur) = app.int(p.field) else { continue };
@@ -788,11 +834,11 @@ fn pickers_page(app: &mut App, ui: &mut egui::Ui, pickers: &[Picker]) {
             if ids.is_empty() {
                 ui.horizontal(|ui| {
                     if ui.small_button("◀").clicked() {
-                        app.set(p.field, FieldValue::Int(cur - 1));
+                        app.set(p.field, FieldValue::Int(step_part_id(p.folder, cur, -1)));
                     }
                     ui.label(format!("#{cur}"));
                     if ui.small_button("▶").clicked() {
-                        app.set(p.field, FieldValue::Int(cur + 1));
+                        app.set(p.field, FieldValue::Int(step_part_id(p.folder, cur, 1)));
                     }
                 });
                 ui.label(
@@ -1116,5 +1162,40 @@ mod voice_tests {
         assert_eq!(voice_index("Player_M"), Some(0));
         assert_eq!(voice_index("Player_M_06"), Some(5));
         assert_eq!(voice_list("Player_M").len(), 6);
+    }
+}
+
+#[cfg(test)]
+mod picker_tests {
+    use super::*;
+
+    #[test]
+    fn hair_steps_by_1000_not_1() {
+        assert_eq!(step_part_id("HeadGear", 3001, 1), 4001);
+        assert_eq!(step_part_id("HeadGear", 3001, -1), 2001);
+    }
+
+    #[test]
+    fn hair_clamps_at_ends() {
+        assert_eq!(step_part_id("HeadGear", 1001, -1), 1001);
+        assert_eq!(step_part_id("HeadGear", 20001, 1), 20001);
+    }
+
+    #[test]
+    fn face_part_skips_gaps() {
+        assert_eq!(step_part_id("Eyebrow", 12, 1), 14);
+        assert_eq!(step_part_id("Eyebrow", 14, -1), 12);
+        assert_eq!(step_part_id("Jaw", 25, 1), 30);
+    }
+
+    #[test]
+    fn invalid_id_snaps_to_nearest_valid() {
+        assert_eq!(step_part_id("HeadGear", 3000, 1), 3001);
+        assert_eq!(step_part_id("Eyebrow", 13, 1), 12);
+    }
+
+    #[test]
+    fn unknown_folder_falls_back_to_plus_minus_one() {
+        assert_eq!(step_part_id("Unknown", 5, 1), 6);
     }
 }
