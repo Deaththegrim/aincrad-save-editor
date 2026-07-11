@@ -390,6 +390,12 @@ impl App {
             _ => None,
         }
     }
+    fn float(&self, name: &str) -> Option<f32> {
+        match self.field(name)?.value {
+            FieldValue::Float(v) => Some(v),
+            _ => None,
+        }
+    }
 
     /// Rescan the looks folder for saved presets.
     fn scan_looks(&mut self) {
@@ -872,15 +878,54 @@ fn looks_page(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
+/// Body-shape sliders and their safe caps: `(save field, min, max)`.
+///
+/// The 10 morph weights run -1.0..=1.0 — the game's own char-creator range,
+/// confirmed from the WBP_AvatarCustomize slider blueprints; outside it the
+/// morphs extrapolate and warp the mesh. `MeshScale` (overall body scale) isn't a
+/// body-panel slider, so it gets a conservative ±15% cap to avoid grotesque
+/// resizing. Clamping to these is what keeps a user from breaking their model.
+const BODY_SLIDERS: &[(&str, f32, f32)] = &[
+    ("MeshScale", 0.85, 1.15),
+    ("Chest", -1.0, 1.0),
+    ("Arms", -1.0, 1.0),
+    ("ForeArms", -1.0, 1.0),
+    ("Hands", -1.0, 1.0),
+    ("Belly", -1.0, 1.0),
+    ("Butts", -1.0, 1.0),
+    ("Hips", -1.0, 1.0),
+    ("Thighs", -1.0, 1.0),
+    ("Legs", -1.0, 1.0),
+    ("Feet", -1.0, 1.0),
+];
+
 fn body_page(app: &mut App, ui: &mut egui::Ui) {
     let t = app.tr();
     ui.heading(t.cat_body);
     ui.add_space(4.0);
-    // Body-shape sliders are hidden on purpose: they're raw morph weights and it's
-    // very easy to warp a character into a broken mesh. Skin + costume colours (the
-    // safe part of "body") are shown below via colours_page.
+    // Only show sliders for fields actually present in this save.
+    let present: Vec<(&'static str, f32, f32, f32)> = BODY_SLIDERS
+        .iter()
+        .filter_map(|&(name, lo, hi)| app.float(name).map(|v| (name, lo, hi, v)))
+        .collect();
+    if present.is_empty() {
+        return;
+    }
     card(ui, |ui| {
         ui.label(RichText::new(t.body_hidden).small().color(theme::SUBTEXT));
+        ui.add_space(6.0);
+        egui::Grid::new("body").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+            for (name, lo, hi, cur) in present {
+                ui.label(pretty(name));
+                let mut v = cur;
+                if ui.add(egui::Slider::new(&mut v, lo..=hi).fixed_decimals(2)).changed() {
+                    // The slider already clamps; clamp again so the written value can
+                    // never exceed the safe cap even via keyboard entry.
+                    app.set(name, FieldValue::Float(v.clamp(lo, hi)));
+                }
+                ui.end_row();
+            }
+        });
     });
 }
 
