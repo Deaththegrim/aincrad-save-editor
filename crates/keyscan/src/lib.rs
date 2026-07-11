@@ -56,6 +56,30 @@ pub fn find_game_pid() -> Option<u32> {
     None
 }
 
+/// Full path to the running game's executable, if found. Lets callers locate the
+/// install (and thus its paks) from the live process — robust to non-default
+/// Steam folders, other drives, and non-Steam installs, unlike scanning Steam's
+/// default paths.
+pub fn find_game_exe() -> Option<std::path::PathBuf> {
+    use sysinfo::System;
+    let mut sys = System::new();
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    for proc_ in sys.processes().values() {
+        let name = proc_.name().to_string_lossy().to_lowercase();
+        let exe = proc_.exe();
+        let exe_name = exe
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        if name.contains("echoesofaincrad") || exe_name.contains("echoesofaincrad") {
+            if let Some(e) = exe {
+                return Some(e.to_path_buf());
+            }
+        }
+    }
+    None
+}
+
 /// Recover the pak AES key from the running game, validating against `pak_path`.
 /// Returns the key as a `0x…` hex string on success.
 pub fn recover_key(pak_path: &Path) -> Result<String, KeyScanError> {

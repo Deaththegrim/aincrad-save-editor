@@ -235,17 +235,24 @@ impl App {
         }
     }
 
+    // (pak_from_running_game is a free fn below)
+
     /// Kick off background key recovery from the running game (non-blocking).
     fn start_recovery(&mut self) {
         if self.recovery.is_some() {
             return;
         }
+        // Locate a pak to validate the key against. Prefer Steam detection, but
+        // fall back to deriving it from the RUNNING game's exe path — that works
+        // when Steam or the game live on a non-default folder or drive, or aren't
+        // a Steam install at all (the game is running, so we have its path).
         let pak = aml_host::find_game()
             .ok()
             .map(|g| g.layout.paks_dir().join("pakchunk0-WindowsClient.pak"))
-            .filter(|p| p.exists());
+            .filter(|p| p.exists())
+            .or_else(pak_from_running_game);
         let Some(pak) = pak else {
-            self.note("Couldn't find the game's paks — is Echoes of Aincrad installed?");
+            self.note("Couldn't find the game's paks. Make sure Echoes of Aincrad is running and you're in the world, then try again.");
             return;
         };
         let pid = aml_keyscan::find_game_pid();
@@ -741,7 +748,13 @@ fn identity_page(app: &mut App, ui: &mut egui::Ui) {
             if !voice.is_empty() {
                 ui.label(t.voice);
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(&voice).color(theme::SUBTEXT));
+                    // Show the 1-based position ("3 / 6") when recognized; the raw
+                    // id otherwise (so an unexpected value is still visible).
+                    let shown = match voice_index(&voice) {
+                        Some(i) => format!("{} / {}", i + 1, voice_list(&voice).len()),
+                        None => voice.clone(),
+                    };
+                    ui.label(RichText::new(shown).color(theme::SUBTEXT));
                     if ui.small_button("◀").clicked() {
                         if let Some(v) = step_voice(&voice, -1) {
                             app.set("Voice", FieldValue::Name(v));
@@ -945,18 +958,67 @@ fn append_log(msg: &str) {
     }
 }
 
-/// Step a voice id like "Player_M_06" by `delta`, keeping the prefix + zero-pad.
-/// Clamped to 1..=30 (the game ignores/defaults out-of-range ids; saves are backed up).
-fn step_voice(voice: &str, delta: i32) -> Option<String> {
-    let split = voice.rfind(|c: char| !c.is_ascii_digit())? + 1;
-    let (prefix, num) = voice.split_at(split);
-    let width = num.len();
-    let n = num.parse::<i32>().ok()?;
-    let next = (n + delta).clamp(1, 30);
-    if next == n {
-        return None;
+/// Find a pak to validate the key against by walking up from the RUNNING game's
+/// executable to its `Content/Paks` folder. Works regardless of where Steam or
+/// the game are installed (any folder or drive, Steam or not). Prefers the known
+/// `pakchunk0-WindowsClient.pak`, else any `.pak` in that folder.
+fn pak_from_running_game() -> Option<PathBuf> {
+    let exe = aml_keyscan::find_game_exe()?;
+    for dir in exe.ancestors() {
+        let paks = dir.join("Content").join("Paks");
+        if paks.is_dir() {
+            let known = paks.join("pakchunk0-WindowsClient.pak");
+            if known.is_file() {
+                return Some(known);
+            }
+            return std::fs::read_dir(&paks)
+                .ok()?
+                .flatten()
+                .map(|e| e.path())
+                .find(|p| p.extension().map(|x| x.eq_ignore_ascii_case("pak")).unwrap_or(false));
+        }
     }
-    Some(format!("{prefix}{next:0width$}"))
+    None
+}
+
+/// The valid character voices, in order, per gender. Echoes of Aincrad ships
+/// exactly 6 voices each. Note the quirk: voice 1 is the BARE "Player_M" /
+/// "Player_F" (no number), and voices 2-6 are "_02".."_06" — there is no "_01",
+/// and nothing above "_06". (Confirmed against the game's Switch_Avatar_Voice
+/// assets.) The old code stepped the trailing number blindly and produced
+/// "Player_M_07" / "Player_M_01", which the game has no asset for and silently
+/// ignores — that was the "voice won't change" bug.
+const MALE_VOICES: [&str; 6] =
+    ["Player_M", "Player_M_02", "Player_M_03", "Player_M_04", "Player_M_05", "Player_M_06"];
+const FEMALE_VOICES: [&str; 6] =
+    ["Player_F", "Player_F_02", "Player_F_03", "Player_F_04", "Player_F_05", "Player_F_06"];
+
+/// Which voice list applies, picked by the voice's own gender prefix.
+fn voice_list(voice: &str) -> &'static [&'static str] {
+    if voice.starts_with("Player_F") {
+        &FEMALE_VOICES
+    } else {
+        &MALE_VOICES
+    }
+}
+
+/// 1-based position of a voice within its list, for display ("3 / 6").
+fn voice_index(voice: &str) -> Option<usize> {
+    voice_list(voice).iter().position(|v| *v == voice)
+}
+
+/// Step to the previous/next valid voice, clamped to the real set so we never
+/// write an id the game lacks. An unrecognized value (e.g. an invalid id written
+/// by an older build) is repaired to the first valid voice on any step.
+fn step_voice(voice: &str, delta: i32) -> Option<String> {
+    let list = voice_list(voice);
+    match list.iter().position(|v| *v == voice) {
+        Some(cur) => {
+            let next = (cur as i32 + delta).clamp(0, list.len() as i32 - 1) as usize;
+            (next != cur).then(|| list[next].to_string())
+        }
+        None => Some(list[0].to_string()),
+    }
 }
 
 /// "CustomColorHairR" -> "Hair R", "MeshScale" -> "Mesh Scale".
@@ -970,4 +1032,44 @@ fn pretty(name: &str) -> String {
         out.push(ch);
     }
     out
+}
+
+#[cfg(test)]
+mod voice_tests {
+    use super::*;
+
+    #[test]
+    fn max_male_voice_stops_at_top_not_invalid() {
+        // VEX's real save value. Stepping up must NOT produce "Player_M_07".
+        assert_eq!(step_voice("Player_M_06", 1), None);
+        assert_eq!(step_voice("Player_M_06", -1).as_deref(), Some("Player_M_05"));
+    }
+
+    #[test]
+    fn voice_two_steps_down_to_bare_first_not_underscore_01() {
+        // Voice 1 is the bare id; there is no "Player_M_01".
+        assert_eq!(step_voice("Player_M_02", -1).as_deref(), Some("Player_M"));
+        assert_eq!(step_voice("Player_M", -1), None); // already first
+        assert_eq!(step_voice("Player_M", 1).as_deref(), Some("Player_M_02"));
+    }
+
+    #[test]
+    fn female_list_used_for_female_voice() {
+        assert_eq!(step_voice("Player_F", 1).as_deref(), Some("Player_F_02"));
+        assert_eq!(step_voice("Player_F_06", 1), None);
+    }
+
+    #[test]
+    fn invalid_id_repairs_to_first_valid() {
+        // An id an older buggy build might have written.
+        assert_eq!(step_voice("Player_M_07", -1).as_deref(), Some("Player_M"));
+        assert_eq!(step_voice("Player_M_01", 1).as_deref(), Some("Player_M"));
+    }
+
+    #[test]
+    fn index_is_one_based_within_six() {
+        assert_eq!(voice_index("Player_M"), Some(0));
+        assert_eq!(voice_index("Player_M_06"), Some(5));
+        assert_eq!(voice_list("Player_M").len(), 6);
+    }
 }
