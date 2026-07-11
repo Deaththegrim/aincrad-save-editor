@@ -1111,11 +1111,43 @@ fn colours_page(app: &mut App, ui: &mut egui::Ui, cat: Category) {
                         // Keep each channel a sane, finite [0,1] value so a stray
                         // keyboard entry can't write an out-of-gamut / NaN colour.
                         let clean = rgba.map(|x| if x.is_finite() { x.clamp(0.0, 1.0) } else { 0.0 });
+                        // Skin tone drives the face's skin layers so the face stays
+                        // matched to the body. The face is three colours: FaceG is the
+                        // base skin (equals the body skin), FaceR a lighter highlight.
+                        // Shift both by the same delta as the skin change to preserve
+                        // each layer's relationship (FaceB, a dark detail, is left alone).
+                        // Without this, changing skin leaves a mismatched face — the
+                        // #1 thing people hit.
+                        if name == "CustomColorSkin" {
+                            let d = [clean[0] - c[0], clean[1] - c[1], clean[2] - c[2]];
+                            for face in ["CustomColorFaceG", "CustomColorFaceR"] {
+                                if let Some(FieldValue::Color(fc)) =
+                                    app.field(face).map(|f| f.value.clone())
+                                {
+                                    let nc = [
+                                        (fc[0] + d[0]).clamp(0.0, 1.0),
+                                        (fc[1] + d[1]).clamp(0.0, 1.0),
+                                        (fc[2] + d[2]).clamp(0.0, 1.0),
+                                        fc[3],
+                                    ];
+                                    app.set(face, FieldValue::Color(nc));
+                                }
+                            }
+                        }
                         app.set(name, FieldValue::Color(clean));
                     }
                     ui.end_row();
                 }
             });
+            if colors.iter().any(|(n, _)| n == "CustomColorSkin") {
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("Skin tone also re-tints the face so they stay matched.")
+                        .size(12.0)
+                        .italics()
+                        .color(theme::SUBTEXT),
+                );
+            }
         }
     });
 }
