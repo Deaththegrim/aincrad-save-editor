@@ -5,10 +5,36 @@
 //! always with a timestamped backup).
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// The no-keyscan build gates out the key-recovery UI + its helpers; that leaves
+// the recovery code paths + their i18n labels legitimately unused there.
+#![cfg_attr(not(feature = "keyscan"), allow(dead_code))]
 
 mod i18n;
 mod locate;
 mod thumbs;
+
+/// Key-scanner shim. The real scanner (reads the running game's memory to recover
+/// the AES key) is compiled in only for the `keyscan` build. The no-keyscan build
+/// (`--no-default-features`, shipped to Nexus / the split repo) gets stubs, so the
+/// binary contains no `OpenProcess`/`ReadProcessMemory` imports that trip AV.
+#[cfg(feature = "keyscan")]
+mod ks {
+    pub use aml_keyscan::{find_game_exe, find_game_pid, recover_key};
+}
+#[cfg(not(feature = "keyscan"))]
+mod ks {
+    #![allow(dead_code)]
+    use std::path::{Path, PathBuf};
+    pub fn find_game_pid() -> Option<u32> {
+        None
+    }
+    pub fn find_game_exe() -> Option<PathBuf> {
+        None
+    }
+    pub fn recover_key(_pak: &Path) -> Result<String, String> {
+        Err("This build has no key scanner — enter your AES key manually.".into())
+    }
+}
 
 use aml_save::appearance::{Field, FieldValue, Group};
 use aml_save::preset::Look;
@@ -255,11 +281,11 @@ impl App {
             self.note("Couldn't find the game's paks. Make sure Echoes of Aincrad is running and you're in the world, then try again.");
             return;
         };
-        let pid = aml_keyscan::find_game_pid();
+        let pid = ks::find_game_pid();
         append_log(&format!("recovery start: pak={} game_pid={:?}", pak.display(), pid));
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let res = aml_keyscan::recover_key(&pak).map_err(|e| e.to_string());
+            let res = ks::recover_key(&pak).map_err(|e| e.to_string());
             let _ = tx.send(res);
         });
         self.recovery = Some(rx);
@@ -312,7 +338,7 @@ impl App {
             }
             Err(e) => {
                 // A torn/locked save is the usual cause when the game is running.
-                if aml_keyscan::find_game_pid().is_some() {
+                if ks::find_game_pid().is_some() {
                     self.note(format!(
                         "Couldn't read the save — close Echoes of Aincrad first (it's running and writing the save), then Reload. [{e}]"
                     ));
@@ -373,7 +399,7 @@ impl App {
             "live save: {}\n",
             self.live_path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "not found".into())
         ));
-        s.push_str(&format!("game running: {}\n", aml_keyscan::find_game_pid().is_some()));
+        s.push_str(&format!("game running: {}\n", ks::find_game_pid().is_some()));
         s.push_str(&format!("last status: {}\n", self.status));
         s.push_str("--- log tail ---\n");
         if let Ok(text) = std::fs::read_to_string(locate::log_path()) {
@@ -538,17 +564,21 @@ impl eframe::App for App {
                         if submit || (edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
                             self.set_key();
                         }
-                        let recovering = self.recovery.is_some();
-                        if ui
-                            .add_enabled(!recovering, egui::Button::new(if recovering {
-                                t.key_scanning
-                            } else {
-                                t.key_recover
-                            }))
-                            .on_hover_text("Launch the game (get into the world), then click to read your key from it")
-                            .clicked()
+                        // Key recovery reads the running game's memory — keyscan build only.
+                        #[cfg(feature = "keyscan")]
                         {
-                            self.start_recovery();
+                            let recovering = self.recovery.is_some();
+                            if ui
+                                .add_enabled(!recovering, egui::Button::new(if recovering {
+                                    t.key_scanning
+                                } else {
+                                    t.key_recover
+                                }))
+                                .on_hover_text("Launch the game (get into the world), then click to read your key from it")
+                                .clicked()
+                            {
+                                self.start_recovery();
+                            }
                         }
                     });
                     ui.add_space(10.0);
@@ -1120,7 +1150,7 @@ fn append_log(msg: &str) {
 /// the game are installed (any folder or drive, Steam or not). Prefers the known
 /// `pakchunk0-WindowsClient.pak`, else any `.pak` in that folder.
 fn pak_from_running_game() -> Option<PathBuf> {
-    let exe = aml_keyscan::find_game_exe()?;
+    let exe = ks::find_game_exe()?;
     for dir in exe.ancestors() {
         let paks = dir.join("Content").join("Paks");
         if paks.is_dir() {

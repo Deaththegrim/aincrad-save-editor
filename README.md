@@ -14,9 +14,18 @@ key straight from your running game — no separate tool needed.
 > GitHub doesn't gate on that, so the convenient integrated build lives here.
 >
 > A split build of the editor that does **no** memory reading (key recovery moved
-> to a separate optional tool) lives in the main
-> [aincrad-mod-loader](https://github.com/Deaththegrim/aincrad-mod-loader) repo for
-> sites that reject the integrated one.
+> to a separate optional tool) lives in its own dedicated repo,
+> [aincrad-save-editor-noscan](https://github.com/Deaththegrim/aincrad-save-editor-noscan),
+> for sites (and antivirus) that reject the integrated one. **If your AV
+> quarantined this build, grab that one instead** — same editor, no scanner.
+
+## Changes
+
+**0.1.5** — fixes a save-corruption bug where **changing your character name** could
+fail with `save length … is not a multiple of 16` and refuse to save. Renaming now
+works with any name (accented, Japanese, emoji, spaces, or empty). Both builds now
+share one codebase: the no-scan build is just `--no-default-features` (the `keyscan`
+feature off), so it ships with **zero** `OpenProcess`/`ReadProcessMemory` imports.
 
 ## Download
 

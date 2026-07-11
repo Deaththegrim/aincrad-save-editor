@@ -10,11 +10,18 @@ repository.workspace = true
 name = "aml-save-editor"
 path = "src/main.rs"
 
+[features]
+# `keyscan` (default) compiles in the AES-key recovery scanner, which reads the
+# running game's memory. The no-keyscan build (`--no-default-features`) ships to
+# Nexus/the split repo with zero process-inspection imports so it doesn't trip AV.
+default = ["keyscan"]
+keyscan = ["dep:aml-keyscan"]
+
 [dependencies]
 aml-save = { workspace = true }
 aml-host = { workspace = true }
 aml-ui = { workspace = true }
-aml-keyscan = { workspace = true }
+aml-keyscan = { workspace = true, optional = true }
 eframe.workspace = true
 egui.workspace = true
 rfd.workspace = true

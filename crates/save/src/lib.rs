@@ -104,14 +104,23 @@ impl SaveFile {
 /// leave `plain` untouched and let `encrypt` surface the misalignment.
 fn realign_eoa(plain: &mut Vec<u8>, extra: &[u8]) {
     const MAGIC: &[u8] = b"GVAS";
-    if !extra.ends_with(MAGIC) || plain.len() < extra.len() {
+    // The real trailer is `[alignment zero-pad][GVAS][fixed footer bytes]` — the
+    // `GVAS` magic sits *inside* the trailer with a fixed footer after it (a
+    // version/flags block), and the padding comes *before* it. Locate the footer
+    // (from the `GVAS` magic onward), then resize the pad so the whole file is
+    // 16-aligned for AES-ECB, keeping the footer bytes byte-for-byte.
+    let Some(g) = extra.windows(MAGIC.len()).position(|w| w == MAGIC) else {
+        return; // not the EoA trailer — leave as-is, let `encrypt` surface it
+    };
+    let footer = &extra[g..];
+    if plain.len() < extra.len() {
         return;
     }
     let body_len = plain.len() - extra.len();
-    let pad = (16 - (body_len + MAGIC.len()) % 16) % 16;
+    let pad = (16 - (body_len + footer.len()) % 16) % 16;
     plain.truncate(body_len);
     plain.resize(body_len + pad, 0);
-    plain.extend_from_slice(MAGIC);
+    plain.extend_from_slice(footer);
 }
 
 /// Back up `path` (if it exists) to a timestamped file under a sibling
@@ -161,41 +170,52 @@ mod tests {
         std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default()
     }
 
+    // The real EoA trailer: alignment zero-pad, then `GVAS` + a fixed footer
+    // block (version/flags). Tests must use this shape — an earlier fake
+    // `[pad]GVAS` (footer-less) trailer let the rename-corruption bug through.
+    const FOOTER: &[u8] = b"GVAS\x03\x00\x00\x00\x0a\x02\x00\x00\xf1";
+
+    fn real_extra() -> Vec<u8> {
+        [b"\0\0\0\0".as_slice(), FOOTER].concat()
+    }
+
     #[test]
-    fn realign_pads_to_16_with_gvas_trailer() {
-        let extra = b"\0\0\0\0GVAS";
-        let mut plain = vec![0xAB; 8];
-        plain.extend_from_slice(extra);
-        realign_eoa(&mut plain, extra);
-        assert_eq!(plain.len() % 16, 0);
-        assert!(plain.ends_with(b"GVAS"));
-        assert_eq!(&plain[..8], &[0xAB; 8]);
+    fn realign_pads_to_16_and_keeps_footer() {
+        let extra = real_extra();
+        let mut plain = vec![0xAB; 13];
+        plain.extend_from_slice(&extra);
+        realign_eoa(&mut plain, &extra);
+        assert_eq!(plain.len() % 16, 0, "must be 16-aligned");
+        assert!(plain.ends_with(FOOTER), "footer (GVAS + version/flags) must survive at the end");
+        assert_eq!(&plain[..13], &[0xAB; 13], "body preserved");
     }
 
     #[test]
     fn realign_is_noop_when_already_aligned() {
-        let extra = b"\0\0\0\0GVAS";
-        let mut plain = vec![0xAB; 8];
-        plain.extend_from_slice(extra);
+        let extra = real_extra(); // 4 pad + 13 footer = 17
+        let mut plain = vec![0xAB; 15]; // 15 + 17 = 32; recomputed pad is also 4
+        plain.extend_from_slice(&extra);
         let before = plain.clone();
-        realign_eoa(&mut plain, extra);
-        assert_eq!(plain, before);
+        realign_eoa(&mut plain, &extra);
+        assert_eq!(plain, before, "aligned save must reproduce byte-for-byte");
     }
 
     #[test]
-    fn realign_recomputes_padding_after_length_change() {
-        let extra = b"\0\0\0\0GVAS";
-        let mut plain = vec![0xAB; 13];
-        plain.extend_from_slice(extra);
-        realign_eoa(&mut plain, extra);
-        assert_eq!(plain.len() % 16, 0);
-        assert!(plain.ends_with(b"GVAS"));
-        assert_eq!(&plain[..13], &[0xAB; 13]);
+    fn realign_recomputes_padding_for_any_length() {
+        let extra = real_extra();
+        for body in 1..48usize {
+            let mut plain = vec![0xAB; body];
+            plain.extend_from_slice(&extra);
+            realign_eoa(&mut plain, &extra);
+            assert_eq!(plain.len() % 16, 0, "body {body} not aligned");
+            assert!(plain.ends_with(FOOTER), "body {body}: footer lost");
+            assert_eq!(&plain[..body], &vec![0xAB; body][..], "body {body} corrupted");
+        }
     }
 
     #[test]
     fn realign_leaves_unknown_trailer_untouched() {
-        let extra = b"NOTGVAS!";
+        let extra = b"NOMAGIC!"; // no GVAS anywhere
         let mut plain = vec![1u8; 13];
         plain.extend_from_slice(extra);
         let before = plain.clone();
