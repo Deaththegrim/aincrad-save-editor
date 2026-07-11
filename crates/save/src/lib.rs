@@ -59,6 +59,7 @@ impl SaveFile {
         backup(path)?;
         let mut plain = Vec::new();
         self.save.write(&mut plain).map_err(|e| SaveError::Serialize(e.to_string()))?;
+        realign_eoa(&mut plain, &self.save.extra);
         let enc = crypto::encrypt(&self.key, &plain)?;
         std::fs::write(path, enc)?;
         Ok(())
@@ -88,6 +89,29 @@ impl SaveFile {
     ) -> Result<(), SaveError> {
         appearance::set(&mut self.save, slot, name, value)
     }
+}
+
+/// Re-pad an EoA save so the whole file is a multiple of 16 (AES-ECB needs it).
+///
+/// The game's format is `[GVAS body][zero padding][b"GVAS"]`, where the padding
+/// is sized so the total length is 16-aligned. `uesave` captures the whole
+/// `[padding][GVAS]` trailer as `extra`. A length-changing edit (rename, or a
+/// shorter/longer voice id) shifts the body, so the original trailer no longer
+/// aligns — this rebuilds it for the current body length. It's a no-op that
+/// reproduces the input byte-for-byte when nothing changed the length.
+///
+/// If `extra` isn't the recognized `…GVAS` trailer (some other save format), we
+/// leave `plain` untouched and let `encrypt` surface the misalignment.
+fn realign_eoa(plain: &mut Vec<u8>, extra: &[u8]) {
+    const MAGIC: &[u8] = b"GVAS";
+    if !extra.ends_with(MAGIC) || plain.len() < extra.len() {
+        return;
+    }
+    let body_len = plain.len() - extra.len();
+    let pad = (16 - (body_len + MAGIC.len()) % 16) % 16;
+    plain.truncate(body_len);
+    plain.resize(body_len + pad, 0);
+    plain.extend_from_slice(MAGIC);
 }
 
 /// Back up `path` (if it exists) to a timestamped file under a sibling
@@ -135,6 +159,48 @@ mod tests {
     }
     fn dirs_home() -> PathBuf {
         std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default()
+    }
+
+    #[test]
+    fn realign_pads_to_16_with_gvas_trailer() {
+        let extra = b"\0\0\0\0GVAS";
+        let mut plain = vec![0xAB; 8];
+        plain.extend_from_slice(extra);
+        realign_eoa(&mut plain, extra);
+        assert_eq!(plain.len() % 16, 0);
+        assert!(plain.ends_with(b"GVAS"));
+        assert_eq!(&plain[..8], &[0xAB; 8]);
+    }
+
+    #[test]
+    fn realign_is_noop_when_already_aligned() {
+        let extra = b"\0\0\0\0GVAS";
+        let mut plain = vec![0xAB; 8];
+        plain.extend_from_slice(extra);
+        let before = plain.clone();
+        realign_eoa(&mut plain, extra);
+        assert_eq!(plain, before);
+    }
+
+    #[test]
+    fn realign_recomputes_padding_after_length_change() {
+        let extra = b"\0\0\0\0GVAS";
+        let mut plain = vec![0xAB; 13];
+        plain.extend_from_slice(extra);
+        realign_eoa(&mut plain, extra);
+        assert_eq!(plain.len() % 16, 0);
+        assert!(plain.ends_with(b"GVAS"));
+        assert_eq!(&plain[..13], &[0xAB; 13]);
+    }
+
+    #[test]
+    fn realign_leaves_unknown_trailer_untouched() {
+        let extra = b"NOTGVAS!";
+        let mut plain = vec![1u8; 13];
+        plain.extend_from_slice(extra);
+        let before = plain.clone();
+        realign_eoa(&mut plain, extra);
+        assert_eq!(plain, before);
     }
 
     #[test]
