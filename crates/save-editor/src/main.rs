@@ -434,6 +434,47 @@ impl App {
         })
     }
 
+    /// The face's base skin layer (`CustomColorFaceG`) differs from the body skin
+    /// (`CustomColorSkin`) — i.e. the face won't match the body. Small rounding is
+    /// ignored.
+    fn face_skin_mismatch(&self) -> bool {
+        let skin = self.color("CustomColorSkin");
+        let g = self.color("CustomColorFaceG");
+        match (skin, g) {
+            (Some(s), Some(g)) => (0..3).any(|i| (s[i] - g[i]).abs() > 3.0 / 255.0),
+            _ => false,
+        }
+    }
+
+    /// Read a colour field as rgba, if present.
+    fn color(&self, name: &str) -> Option<[f32; 4]> {
+        match self.field(name).map(|f| &f.value) {
+            Some(FieldValue::Color(c)) => Some(*c),
+            _ => None,
+        }
+    }
+
+    /// Force the face to match the body skin: set the face base layer (`FaceG`)
+    /// equal to the body skin, and shift the highlight (`FaceR`) by the same delta
+    /// so it re-tints to the new base instead of snapping to a flat colour. `FaceB`
+    /// (a dark detail line) is left alone. Repairs an already-mismatched save.
+    fn match_face_to_skin(&mut self) {
+        let Some(skin) = self.color("CustomColorSkin") else { return };
+        let Some(g) = self.color("CustomColorFaceG") else { return };
+        let d = [skin[0] - g[0], skin[1] - g[1], skin[2] - g[2]];
+        if let Some(r) = self.color("CustomColorFaceR") {
+            let nr = [
+                (r[0] + d[0]).clamp(0.0, 1.0),
+                (r[1] + d[1]).clamp(0.0, 1.0),
+                (r[2] + d[2]).clamp(0.0, 1.0),
+                r[3],
+            ];
+            self.set("CustomColorFaceR", FieldValue::Color(nr));
+        }
+        self.set("CustomColorFaceG", FieldValue::Color(skin));
+        self.note("Matched the face to your skin tone. Click \"Apply to game\" to save it.");
+    }
+
     /// Reset `MeshScale` to 1.0 on every slot (fixes the global-scale bug), marks
     /// the save dirty, and clears the flag. The user still confirms via "Apply".
     fn fix_scale(&mut self) {
@@ -1155,6 +1196,19 @@ fn colours_page(app: &mut App, ui: &mut egui::Ui, cat: Category) {
     ui.heading(app.tr().colours);
     ui.add_space(3.0);
     card(ui, |ui| {
+        // One-click repair for the common "face doesn't match my skin tone" case:
+        // the face's base layer drifted from the body skin. Shown on the Face/Body
+        // colour pages (where skin + face colours live) when they actually differ.
+        if matches!(cat, Category::Face | Category::Body) && app.face_skin_mismatch() {
+            if ui
+                .button(RichText::new("Match face to skin tone").strong())
+                .on_hover_text("Your face colour doesn't match your body skin — this snaps it back so they match")
+                .clicked()
+            {
+                app.match_face_to_skin();
+            }
+            ui.add_space(6.0);
+        }
         for (name, mut b) in toggles {
             // "Use the game's default colour for X" — when on, the custom colour is ignored.
             if ui.checkbox(&mut b, format!("Default {} colour", pretty_default(&name))).changed() {
