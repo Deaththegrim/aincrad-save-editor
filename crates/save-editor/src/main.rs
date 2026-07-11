@@ -203,6 +203,9 @@ struct App {
     key_input: String,
     /// In-flight background key recovery (channel delivers the result).
     recovery: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+    /// The loaded save has a non-1.0 body scale (MeshScale) on some slot, which
+    /// resizes every character/mob in-game — offer a one-click fix.
+    scale_bug: bool,
     lang: Lang,
 }
 
@@ -229,6 +232,7 @@ impl App {
             thumb_scale: 1.0,
             key_input: String::new(),
             recovery: None,
+            scale_bug: false,
             lang,
         };
         app.scan_looks();
@@ -333,6 +337,9 @@ impl App {
                 self.fields = sf.appearance(self.slot).unwrap_or_default();
                 self.save = Some(sf);
                 self.dirty = false;
+                // Flag the global-scale bug (a non-1.0 MeshScale on any slot) so we
+                // can offer a one-click fix; don't touch the save silently.
+                self.scale_bug = self.detect_scale_bug(n);
                 self.status =
                     format!("Loaded {n} character(s) into a working copy — your live save is untouched.");
             }
@@ -413,6 +420,35 @@ impl App {
 
     fn field(&self, name: &str) -> Option<&Field> {
         self.fields.iter().find(|f| f.name == name)
+    }
+
+    /// True if any character slot has a non-1.0 `MeshScale` — the value that
+    /// resizes every character/mob in-game to one height.
+    fn detect_scale_bug(&self, n: usize) -> bool {
+        let Some(sf) = &self.save else { return false };
+        (0..n).any(|s| {
+            sf.appearance(s).into_iter().flatten().any(|f| {
+                f.name == "MeshScale"
+                    && matches!(f.value, FieldValue::Float(v) if (v - 1.0).abs() > 1e-4)
+            })
+        })
+    }
+
+    /// Reset `MeshScale` to 1.0 on every slot (fixes the global-scale bug), marks
+    /// the save dirty, and clears the flag. The user still confirms via "Apply".
+    fn fix_scale(&mut self) {
+        let n = self.save.as_ref().map(|s| s.character_count()).unwrap_or(0);
+        if let Some(sf) = &mut self.save {
+            for s in 0..n {
+                let _ = sf.set_appearance(s, "MeshScale", FieldValue::Float(1.0));
+            }
+            self.fields = sf.appearance(self.slot).unwrap_or_default();
+        }
+        self.scale_bug = false;
+        self.dirty = true;
+        self.note(
+            "Reset body scale to normal on all characters. Click \"Apply to game\" to save the fix.",
+        );
     }
     fn int(&self, name: &str) -> Option<i32> {
         match self.field(name)?.value {
@@ -597,6 +633,26 @@ impl eframe::App for App {
                 });
             });
             return;
+        }
+
+        // Global-scale bug: a non-1.0 MeshScale resizes every character/mob in-game.
+        // Offer a one-click fix at the top so anyone who hit it can repair their save.
+        if self.scale_bug {
+            egui::Panel::top("scale_bug_banner").show_inside(ui, |ui| {
+                ui.add_space(6.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        RichText::new("⚠ This save has a modified body scale that resizes every character and mob in the game to one height.")
+                            .strong()
+                            .color(egui::Color32::from_rgb(240, 180, 60)),
+                    );
+                });
+                ui.add_space(2.0);
+                if ui.button(RichText::new("Fix character scale").strong()).clicked() {
+                    self.fix_scale();
+                }
+                ui.add_space(6.0);
+            });
         }
 
         // Left: category rail. Right: the selected category only — no endless scroll.
@@ -1021,11 +1077,15 @@ fn looks_page(app: &mut App, ui: &mut egui::Ui) {
 ///
 /// The 10 morph weights run -1.0..=1.0 — the game's own char-creator range,
 /// confirmed from the WBP_AvatarCustomize slider blueprints; outside it the
-/// morphs extrapolate and warp the mesh. `MeshScale` (overall body scale) isn't a
-/// body-panel slider, so it gets a conservative ±15% cap to avoid grotesque
-/// resizing. Clamping to these is what keeps a user from breaking their model.
+/// morphs extrapolate and warp the mesh. Clamping to these is what keeps a user
+/// from breaking their model.
+///
+/// `MeshScale` (overall body scale) is deliberately NOT here: the character
+/// creator never exposes it, and a non-1.0 value scales *every* character and mob
+/// in the game to the same height (a reported save-breaking bug). It's no longer
+/// editable; loading a save with a drifted value flags `scale_bug` and offers a
+/// one-click `fix_scale` to reset it to 1.0.
 const BODY_SLIDERS: &[(&str, f32, f32)] = &[
-    ("MeshScale", 0.85, 1.15),
     ("Chest", -1.0, 1.0),
     ("Arms", -1.0, 1.0),
     ("ForeArms", -1.0, 1.0),
