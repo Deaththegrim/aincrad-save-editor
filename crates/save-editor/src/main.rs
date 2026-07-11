@@ -299,8 +299,12 @@ impl App {
         }
         match SaveFile::load(&self.work_path, &key) {
             Ok(sf) => {
-                self.fields = sf.appearance(self.slot).unwrap_or_default();
                 let n = sf.character_count();
+                // Keep the selected slot in range: loading a save with fewer
+                // characters than the last one must not leave slot pointing past
+                // the end (which would show an empty, uneditable character).
+                self.slot = self.slot.min(n.saturating_sub(1));
+                self.fields = sf.appearance(self.slot).unwrap_or_default();
                 self.save = Some(sf);
                 self.dirty = false;
                 self.status =
@@ -807,14 +811,42 @@ const PART_IDS: &[(&str, &[i32])] = &[
     ("Freckles", &[0, 1, 2]),
 ];
 
+/// The **NPC side**: hairstyles the game defines in `DT_HeadGearParts` (the
+/// `HG800xxx`/`HG85xxxx` series used by NPCs / special characters) but does NOT
+/// offer in the character creator. Each has its own `HG*_Default` mesh parts, so
+/// the game can render them on the player. Kept as their own list — separate from
+/// the PC char-creator set in `PART_IDS` — so the UI has a clear PC side / NPC side.
+/// No thumbnails exist for these; shown as numbered chips. Experimental (some may
+/// suit only one gender); every Apply makes a backup.
+const NPC_HAIR: &[i32] = &[
+    800001, 801001, 801021, 802001, 803001, 804001, 805001, 806001, 807001, 807031,
+    807502, 807504, 808001, 809001, 850001, 850505, 851001, 851503, 852001, 852011,
+    853001, 854001, 854011, 855001, 856001, 856031, 857001,
+];
+
+/// PC-side valid ids (character-creator) for a part folder (empty if unknown).
+fn part_ids_for(folder: &str) -> &'static [i32] {
+    PART_IDS.iter().find(|(f, _)| *f == folder).map(|(_, v)| *v).unwrap_or(&[])
+}
+
+/// NPC-side extra ids for a part folder (only hair has any today).
+fn extra_ids_for(folder: &str) -> &'static [i32] {
+    if folder == "HeadGear" {
+        NPC_HAIR
+    } else {
+        &[]
+    }
+}
+
 /// Step `cur` to the previous/next valid id for a part folder, staying within the
 /// real set (so we never write an id the game has no part for). Falls back to a
 /// plain ±1 only for a folder we have no id list for. An unrecognized `cur` snaps
 /// to the nearest valid id.
 fn step_part_id(folder: &str, cur: i32, delta: i32) -> i32 {
-    let Some(ids) = PART_IDS.iter().find(|(f, _)| *f == folder).map(|(_, v)| *v) else {
-        return cur + delta;
-    };
+    let ids = part_ids_for(folder);
+    if ids.is_empty() {
+        return cur + delta; // unknown part: no id list to stay within
+    }
     match ids.iter().position(|&v| v == cur) {
         Some(i) => {
             let next = (i as i32 + delta).clamp(0, ids.len() as i32 - 1) as usize;
@@ -831,14 +863,21 @@ fn pickers_page(app: &mut App, ui: &mut egui::Ui, pickers: &[Picker]) {
         ui.add_space(3.0);
         card(ui, |ui| {
             let ids = app.thumbs.available_ids(p.folder);
+            let npc = extra_ids_for(p.folder);
+            let mut pick = None;
+            // --- PC side: the character-creator options ---
+            if !npc.is_empty() {
+                ui.label(RichText::new("Character creator").small().strong().color(theme::SUBTEXT));
+            }
             if ids.is_empty() {
+                // No thumbnails: numbered stepper over the PC ids.
                 ui.horizontal(|ui| {
                     if ui.small_button("◀").clicked() {
-                        app.set(p.field, FieldValue::Int(step_part_id(p.folder, cur, -1)));
+                        pick = Some(step_part_id(p.folder, cur, -1));
                     }
                     ui.label(format!("#{cur}"));
                     if ui.small_button("▶").clicked() {
-                        app.set(p.field, FieldValue::Int(step_part_id(p.folder, cur, 1)));
+                        pick = Some(step_part_id(p.folder, cur, 1));
                     }
                 });
                 ui.label(
@@ -848,22 +887,39 @@ fn pickers_page(app: &mut App, ui: &mut egui::Ui, pickers: &[Picker]) {
                         .color(theme::SUBTEXT),
                 );
             } else {
-                let mut pick = None;
                 let px = 72.0 * app.thumb_scale;
                 let none_label = app.tr().none;
                 ui.horizontal_wrapped(|ui| {
                     if p.optional && thumbs::none_button(ui, cur == 0, none_label).clicked() {
                         pick = Some(0);
                     }
-                    for id in ids {
+                    for &id in &ids {
                         if thumbs::thumb_button(ui, &mut app.thumbs, p.folder, id, id == cur, px).clicked() {
                             pick = Some(id);
                         }
                     }
                 });
-                if let Some(id) = pick {
-                    app.set(p.field, FieldValue::Int(id));
-                }
+            }
+            // --- NPC side: styles not in the char creator, as numbered chips ---
+            if !npc.is_empty() {
+                ui.add_space(8.0);
+                ui.separator();
+                ui.label(
+                    RichText::new("NPC / extra styles (no preview — experimental)")
+                        .small()
+                        .strong()
+                        .color(theme::SUBTEXT),
+                );
+                ui.horizontal_wrapped(|ui| {
+                    for &id in npc {
+                        if ui.selectable_label(id == cur, format!("#{id}")).clicked() {
+                            pick = Some(id);
+                        }
+                    }
+                });
+            }
+            if let Some(id) = pick {
+                app.set(p.field, FieldValue::Int(id));
             }
         });
         ui.add_space(8.0);
@@ -1015,7 +1071,10 @@ fn colours_page(app: &mut App, ui: &mut egui::Ui, cat: Category) {
                     ui.label(pretty(name));
                     let mut rgba = *c;
                     if ui.color_edit_button_rgba_unmultiplied(&mut rgba).changed() {
-                        app.set(name, FieldValue::Color(rgba));
+                        // Keep each channel a sane, finite [0,1] value so a stray
+                        // keyboard entry can't write an out-of-gamut / NaN colour.
+                        let clean = rgba.map(|x| if x.is_finite() { x.clamp(0.0, 1.0) } else { 0.0 });
+                        app.set(name, FieldValue::Color(clean));
                     }
                     ui.end_row();
                 }
@@ -1177,8 +1236,20 @@ mod picker_tests {
 
     #[test]
     fn hair_clamps_at_ends() {
+        // The ◀/▶ stepper covers the PC (char-creator) hairs; NPC styles are
+        // separate chips, so the stepper clamps at the last creator hair.
         assert_eq!(step_part_id("HeadGear", 1001, -1), 1001);
         assert_eq!(step_part_id("HeadGear", 20001, 1), 20001);
+    }
+
+    #[test]
+    fn npc_hair_is_separate_from_creator_set() {
+        let pc = part_ids_for("HeadGear");
+        let npc = extra_ids_for("HeadGear");
+        assert_eq!(pc.len(), 20);
+        assert!(!npc.is_empty());
+        assert!(npc.iter().all(|id| !pc.contains(id))); // no overlap: clean PC/NPC split
+        assert!(npc.contains(&800001));
     }
 
     #[test]
