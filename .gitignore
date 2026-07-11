@@ -1,0 +1,11 @@
+/target
+/dist
+**/*.rs.bk
+Cargo.lock.orig
+# never commit game material or secrets
+*.sav
+*.pak
+*.utoc
+*.ucas
+aes.key
+aml-data/
