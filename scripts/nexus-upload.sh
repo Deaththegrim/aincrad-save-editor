@@ -51,7 +51,6 @@ done
 [ -n "$file_id" ] || [ -n "$mod_id" ] || die "one of --file-id (new version) or --mod-id (new file) required"
 [ -z "$file_id" ] || [ -z "$mod_id" ] || die "--file-id and --mod-id are mutually exclusive"
 size="$(stat -c%s "$file")"
-[ "$size" -le $((100*1024*1024)) ] || die "file is >100 MiB; needs the multipart flow (not implemented here)"
 [[ "$version" =~ ^[a-zA-Z0-9.-]+$ ]] || die "version must match ^[a-zA-Z0-9.-]+$"
 [[ "$name" =~ ^[a-zA-Z0-9\ _\'\(\).-]+$ ]] || die "name has characters Nexus rejects (allowed: a-zA-Z0-9 _'().-)"
 
@@ -82,19 +81,41 @@ api() { # api METHOD PATH [json-body]
   fi
 }
 
-echo "1/5 create upload session…"
-up="$(api POST /uploads "$(jq -n --argjson s "$size" --arg f "$(basename "$file")" '{size_bytes:$s, filename:$f}')")"
+# Use the MULTIPART flow (like Nexus's official upload-action): its part presigned
+# URLs sign only `host`, so a plain PUT works. The single-part `/uploads` URL signs
+# content-disposition/content-type with values the client can't reconstruct (403).
+echo "1/6 create multipart upload session…"
+up="$(api POST /uploads/multipart "$(jq -n --argjson s "$size" --arg f "$(basename "$file")" '{size_bytes:$s, filename:$f}')")"
 uid="$(echo "$up" | jq -r '.data.id')"
-purl="$(echo "$up" | jq -r '.data.presigned_url')"
-[ -n "$uid" ] && [ "$uid" != null ] || die "no upload id in response: $up"
+psize="$(echo "$up" | jq -r '.data.part_size_bytes')"
+curl_complete="$(echo "$up" | jq -r '.data.complete_presigned_url')"
+mapfile -t purls < <(echo "$up" | jq -r '.data.part_presigned_urls[]')
+nparts="${#purls[@]}"
+{ [ -n "$uid" ] && [ "$uid" != null ] && [ "$nparts" -ge 1 ]; } || die "bad multipart response: $up"
 
-echo "2/5 PUT file to presigned URL…"
-curl -fsS -X PUT "$purl" --data-binary @"$file" -H 'Content-Type: application/octet-stream' >/dev/null
+echo "2/6 PUT $nparts part(s) of up to $psize bytes…"
+parts_xml=""
+for i in $(seq 1 "$nparts"); do
+  part="$(mktemp)"
+  dd if="$file" of="$part" bs="$psize" skip="$((i-1))" count=1 2>/dev/null
+  etag="$(curl -fsS -X PUT "${purls[$((i-1))]}" --upload-file "$part" \
+            -H 'Content-Type: application/octet-stream' -D - -o /dev/null \
+          | grep -i '^etag:' | tr -d '\r' | sed 's/[^:]*: *//; s/"//g')"
+  rm -f "$part"
+  [ -n "$etag" ] || die "no ETag for part $i"
+  echo "   part $i/$nparts ETag=$etag"
+  parts_xml+="  <Part><PartNumber>$i</PartNumber><ETag>$etag</ETag></Part>"$'\n'
+done
 
-echo "3/5 finalise…"
+echo "3/6 complete multipart…"
+curl -fsS -X POST "$curl_complete" -H 'Content-Type: application/xml' \
+  --data-binary "<CompleteMultipartUpload>
+$parts_xml</CompleteMultipartUpload>" >/dev/null
+
+echo "4/6 finalise…"
 api POST "/uploads/$uid/finalise" >/dev/null
 
-echo "4/5 poll until available…"
+echo "5/6 poll until available…"
 for _ in $(seq 1 60); do
   st="$(api GET "/uploads/$uid" | jq -r '.data.state')"
   echo "   state=$st"
@@ -103,7 +124,7 @@ for _ in $(seq 1 60); do
 done
 [ "${st:-}" = available ] || die "upload never became available (last state: ${st:-none})"
 
-echo "5/5 create mod $([ -n "$file_id" ] && echo "file version" || echo "file")…"
+echo "6/6 create mod $([ -n "$file_id" ] && echo "file version" || echo "file")…"
 if [ -n "$file_id" ]; then
   body="$(jq -n --arg u "$uid" --arg n "$name" --arg v "$version" --arg c "$category" --arg d "$desc" \
     '{upload_id:$u, name:$n, version:$v, file_category:$c} + (if $d=="" then {} else {description:$d} end)')"
