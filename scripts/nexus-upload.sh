@@ -62,7 +62,16 @@ if [ "$publish" -ne 1 ]; then
   echo "DRY RUN — add --publish to actually upload. (No Nexus request was made.)"
   exit 0
 fi
-[ -n "$key" ] || die "--key or NEXUS_API_KEY required to publish"
+# Key resolution: --key > $NEXUS_API_KEY > the key aml stored (aml nxm set-key).
+if [ -z "$key" ]; then
+  for cfg in "${XDG_CONFIG_HOME:-$HOME/.config}/aml/config.json" "$(dirname "$0")/../aml-data/config.json"; do
+    if [ -f "$cfg" ]; then
+      key="$(jq -r '.nexus_api_key // empty' "$cfg" 2>/dev/null || true)"
+      [ -n "$key" ] && { echo "(using the Nexus key stored by aml: $cfg)"; break; }
+    fi
+  done
+fi
+[ -n "$key" ] || die "no key: pass --key, set NEXUS_API_KEY, or run 'aml nxm set-key <k>'"
 
 api() { # api METHOD PATH [json-body]
   local m="$1" p="$2" body="${3:-}"
