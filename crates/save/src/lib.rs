@@ -23,6 +23,18 @@ pub enum SaveError {
     BadKey,
     #[error("save length {0} is not a multiple of 16 (not an encrypted EoA save?)")]
     BadLength(usize),
+    #[error(
+        "This save has an unrecognized trailer, so the editor can't safely re-pad it \
+         (it would rather refuse than risk corrupting your save).\n\
+         Nothing was written — your save is untouched.\n\n\
+         Please send this to the developer so it can be supported:\n\
+         --- EoA save diagnostic ---\n\
+         serialized length: {len} (needs a multiple of 16)\n\
+         uesave extra ({extra_len} bytes): {extra_hex}\n\
+         last 32 bytes: {tail_hex}\n\
+         ---------------------------"
+    )]
+    Unaligned { len: usize, extra_len: usize, extra_hex: String, tail_hex: String },
     #[error("could not parse the decrypted save as a UE5 GVAS SaveGame: {0}")]
     Parse(String),
     #[error("could not re-serialize the save: {0}")]
@@ -60,6 +72,17 @@ impl SaveFile {
         let mut plain = Vec::new();
         self.save.write(&mut plain).map_err(|e| SaveError::Serialize(e.to_string()))?;
         realign_eoa(&mut plain, &self.save.extra);
+        // If realign couldn't recognize the trailer, refuse with a copy-pasteable
+        // diagnostic (never write a corrupt/misaligned save).
+        if plain.len() % 16 != 0 {
+            let tail = &plain[plain.len().saturating_sub(32)..];
+            return Err(SaveError::Unaligned {
+                len: plain.len(),
+                extra_len: self.save.extra.len(),
+                extra_hex: hex(&self.save.extra),
+                tail_hex: hex(tail),
+            });
+        }
         let enc = crypto::encrypt(&self.key, &plain)?;
         std::fs::write(path, enc)?;
         Ok(())
@@ -104,23 +127,60 @@ impl SaveFile {
 /// leave `plain` untouched and let `encrypt` surface the misalignment.
 fn realign_eoa(plain: &mut Vec<u8>, extra: &[u8]) {
     const MAGIC: &[u8] = b"GVAS";
-    // The real trailer is `[alignment zero-pad][GVAS][fixed footer bytes]` — the
-    // `GVAS` magic sits *inside* the trailer with a fixed footer after it (a
-    // version/flags block), and the padding comes *before* it. Locate the footer
-    // (from the `GVAS` magic onward), then resize the pad so the whole file is
-    // 16-aligned for AES-ECB, keeping the footer bytes byte-for-byte.
-    let Some(g) = extra.windows(MAGIC.len()).position(|w| w == MAGIC) else {
-        return; // not the EoA trailer — leave as-is, let `encrypt` surface it
-    };
-    let footer = &extra[g..];
-    if plain.len() < extra.len() {
-        return;
+    // Primary: uesave hands the `[alignment zero-pad][GVAS][footer?]` trailer as
+    // `extra`, with the body everything before it. Preserve the footer (from the
+    // `GVAS` magic onward) and rebuild the pad so the file is 16-aligned (AES-ECB).
+    if let Some(g) = extra.windows(MAGIC.len()).position(|w| w == MAGIC) {
+        if plain.len() >= extra.len() {
+            let footer = extra[g..].to_vec();
+            let body_len = plain.len() - extra.len();
+            repad_eoa(plain, body_len, &footer);
+            return;
+        }
     }
-    let body_len = plain.len() - extra.len();
+    // Fallback: some saves don't expose the trailer as `extra` (a different game
+    // build, or a uesave parse that folds it into the body) — that's the case
+    // behind a mysterious "length not a multiple of 16" on write. The serialized
+    // buffer still ENDS with `[…None terminator][zero-pad][GVAS]`. Anchor on the
+    // terminal `None` FName (the GVAS property-list end) that precedes the trailing
+    // `GVAS`, and rebuild only the zero-pad between them. Guarded: we only touch it
+    // when that gap is pure zero padding, so we never discard real bytes by
+    // guessing — anything else falls through to the diagnostic error.
+    if let Some(g) = rposition(plain, MAGIC) {
+        const NONE_TERM: &[u8] = b"\x05\x00\x00\x00None\x00"; // int32 len 5 + "None\0"
+        if let Some(n) = rposition(&plain[..g], NONE_TERM) {
+            let body_end = n + NONE_TERM.len();
+            if plain[body_end..g].iter().all(|&b| b == 0) {
+                let footer = plain[g..].to_vec();
+                repad_eoa(plain, body_end, &footer);
+            }
+        }
+    }
+    // Unrecognized trailer: leave `plain` as-is; `encrypt` surfaces the
+    // misalignment and `write` attaches a copy-pasteable diagnostic.
+}
+
+/// Truncate `plain` to `body_len`, zero-pad so `body_len + pad + footer` is
+/// 16-aligned, then append `footer` (the `GVAS…` trailer).
+fn repad_eoa(plain: &mut Vec<u8>, body_len: usize, footer: &[u8]) {
     let pad = (16 - (body_len + footer.len()) % 16) % 16;
     plain.truncate(body_len);
     plain.resize(body_len + pad, 0);
     plain.extend_from_slice(footer);
+}
+
+/// Lowercase space-separated hex, for copy-pasteable diagnostics.
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ")
+}
+
+/// Index of the LAST occurrence of `needle` in `hay` (there's no std slice rfind
+/// for subslices). Used to find the trailing `GVAS` magic.
+fn rposition(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return None;
+    }
+    (0..=hay.len() - needle.len()).rev().find(|&i| &hay[i..i + needle.len()] == needle)
 }
 
 /// Back up `path` (if it exists) to a timestamped file under a sibling
@@ -214,6 +274,27 @@ mod tests {
     }
 
     #[test]
+    fn realign_fallback_when_extra_lacks_gvas() {
+        // The friend's case: uesave didn't hand us a GVAS-bearing `extra`, but the
+        // serialized buffer still ends with `[body][zero pad][GVAS]`. realign must
+        // find the trailer in the buffer and re-align without corrupting the body.
+        // Body ends with a length-prefixed "None" terminator like a real save.
+        let mut body = vec![0xAB; 20];
+        body.extend_from_slice(&[0x05, 0x00, 0x00, 0x00]); // int32 len = 5
+        body.extend_from_slice(b"None\0"); // the 5 string bytes
+        let mut plain = body.clone();
+        plain.extend_from_slice(&[0, 0, 0]); // some zero pad
+        plain.extend_from_slice(b"GVAS"); // trailing magic
+        realign_eoa(&mut plain, b""); // <-- empty extra forces the fallback
+        assert_eq!(plain.len() % 16, 0, "fallback must 16-align");
+        assert!(plain.ends_with(b"GVAS"), "GVAS must stay at the end");
+        assert_eq!(&plain[..20], &[0xAB; 20], "body preserved");
+        // The terminal "None" string must still read back its 5 declared bytes.
+        let s = &plain[24..29];
+        assert_eq!(s, b"None\0", "None terminator intact across the rebuilt pad");
+    }
+
+    #[test]
     fn realign_leaves_unknown_trailer_untouched() {
         let extra = b"NOMAGIC!"; // no GVAS anywhere
         let mut plain = vec![1u8; 13];
@@ -233,6 +314,55 @@ mod tests {
         let k = crypto::parse_key(key.trim()).unwrap();
         let reenc = crypto::encrypt(&k, &plain).unwrap();
         assert_eq!(reenc, raw, "unchanged save must re-encrypt byte-identical");
+    }
+
+    // Regression for "save length … not a multiple of 16": a length-CHANGING edit
+    // (voice → the shorter bare `Player_M`, and rename) must write a 16-aligned
+    // file through the REAL `write()` path and reload cleanly. This exercises
+    // realign end-to-end on the real save, not just the synthetic-trailer unit
+    // tests above (which use a fake footer). Length-changing edits are exactly the
+    // ones that shift the body and were corrupting saves.
+    // Regression for "save length … not a multiple of 16": EVERY length-changing
+    // edit (the Identity group: HeroName / Gender / Voice — names + enums shift the
+    // body) must write a 16-aligned file through the REAL `write()` path and reload
+    // cleanly. Fixed-width fields (colours=floats, parts=ints, body=floats) can't
+    // change length so they're not the suspect. Various string lengths incl.
+    // shorter, longer, empty, accented, and multi-byte (emoji) names.
+    #[test]
+    fn length_changing_edits_write_aligned_and_reload() {
+        let Some((key, sav)) = local() else { return };
+        let out = std::env::temp_dir().join("aml-realign-regression.sav");
+        let mut cases: Vec<(&str, FieldValue)> = vec![
+            ("Voice", FieldValue::Name("Player_M".into())),        // shorter
+            ("Voice", FieldValue::Name("Player_M_06".into())),     // longest
+            ("HeroName", FieldValue::Str(String::new())),          // empty
+            ("HeroName", FieldValue::Str("A".into())),             // 1 char
+            ("HeroName", FieldValue::Str("Zoë".into())),           // accented (multi-byte)
+            ("HeroName", FieldValue::Str("🗡️Kirito🗡️".into())),      // emoji
+            ("HeroName", FieldValue::Str("a-fairly-long-hero-name-to-shift-body".into())),
+        ];
+        // Gender flips length via the enum string too.
+        if let Some(g) = SaveFile::load(&sav, key.trim()).ok()
+            .and_then(|f| f.appearance(0).ok())
+            .and_then(|v| v.into_iter().find(|f| f.name == "Gender"))
+        {
+            if let FieldValue::Enum(s) = g.value {
+                let flip = if s.contains("Female") { s.replace("Female", "Male") } else { s.replace("Male", "Female") };
+                cases.push(("Gender", FieldValue::Enum(flip)));
+            }
+        }
+        for (field, value) in cases {
+            let mut file = SaveFile::load(&sav, key.trim()).expect("load");
+            if file.appearance(0).unwrap().iter().all(|f| f.name != field) {
+                continue;
+            }
+            file.set_appearance(0, field, value.clone()).expect("set field");
+            file.write(&out).unwrap_or_else(|e| panic!("{field}={value:?}: write failed: {e}"));
+            let enc = std::fs::read(&out).unwrap();
+            assert_eq!(enc.len() % 16, 0, "{field}={value:?}: written save not 16-aligned");
+            SaveFile::load(&out, key.trim()).unwrap_or_else(|e| panic!("{field}={value:?}: reload failed: {e}"));
+        }
+        let _ = std::fs::remove_file(&out);
     }
 
     #[test]

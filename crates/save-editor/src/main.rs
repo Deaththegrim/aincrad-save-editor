@@ -11,6 +11,7 @@
 
 mod i18n;
 mod locate;
+mod npchair;
 mod thumbs;
 
 /// Key-scanner shim. The real scanner (reads the running game's memory to recover
@@ -207,6 +208,13 @@ struct App {
     /// resizes every character/mob in-game — offer a one-click fix.
     scale_bug: bool,
     lang: Lang,
+    /// Path to the hairswap mod's config file, if the mod is installed (resolved
+    /// once at startup). `None` hides the NPC-hair section.
+    hairswap_cfg: Option<PathBuf>,
+    /// Currently-configured NPC hair id (mirrors the hairswap config file).
+    npc_hair: Option<u32>,
+    /// A save failure to surface in a copy-pasteable modal (full diagnostic text).
+    save_error: Option<String>,
 }
 
 impl App {
@@ -215,6 +223,8 @@ impl App {
         let key = cfg.aes_key;
         let lang = cfg.lang.as_deref().map(Lang::from_code).unwrap_or(Lang::En);
         let live_path = locate::find_save();
+        let hairswap_cfg = npchair::config_path();
+        let npc_hair = hairswap_cfg.as_deref().and_then(npchair::read);
         let mut app = App {
             key,
             live_path,
@@ -234,6 +244,9 @@ impl App {
             recovery: None,
             scale_bug: false,
             lang,
+            hairswap_cfg,
+            npc_hair,
+            save_error: None,
         };
         app.scan_looks();
         if app.key.is_none() {
@@ -570,9 +583,23 @@ impl App {
                     self.dirty = false;
                     self.status = format!("Saved to working copy: {}", self.work_path.display());
                 }
-                Err(e) => self.note(format!("Save failed: {e}")),
+                Err(e) => {
+                    self.note(format!("Save failed: {e}"));
+                    self.raise_save_error(&e);
+                }
             }
         }
+    }
+
+    /// Stash a save failure as a full, copy-pasteable report (error + why + app/OS
+    /// context) and open the modal so the user can send it to us — people won't
+    /// relay an error unless it's one click to copy.
+    fn raise_save_error(&mut self, e: &aml_save::SaveError) {
+        let mut report = String::new();
+        report.push_str(&format!("Aincrad Save Editor {} — save failed\n", env!("CARGO_PKG_VERSION")));
+        report.push_str(&format!("os: {} {}\n\n", std::env::consts::OS, std::env::consts::ARCH));
+        report.push_str(&e.to_string());
+        self.save_error = Some(report);
     }
 
     /// Copy the (saved) work file over the live save, timestamp-backing it up first.
@@ -724,6 +751,7 @@ impl eframe::App for App {
                 Category::Hair => {
                     pickers_page(self, ui, HAIR);
                     colours_page(self, ui, Category::Hair);
+                    npc_hair_mod_page(self, ui);
                 }
                 Category::Body => {
                     body_page(self, ui);
@@ -829,6 +857,47 @@ fn top_bar(app: &mut App, ui: &mut egui::Ui) {
                     }
                 });
             });
+    }
+
+    if let Some(report) = app.save_error.clone() {
+        let mut keep_open = true;
+        egui::Window::new("Save failed — copy this and send it to us")
+            .collapsible(false)
+            .resizable(true)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ui.ctx(), |ui| {
+                ui.set_max_width(580.0);
+                ui.label(
+                    RichText::new(
+                        "Your save was NOT changed. Copy the report below and send it to the \
+                         developer so this save can be supported.",
+                    )
+                    .color(theme::SUBTEXT),
+                );
+                ui.add_space(6.0);
+                egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+                    // A selectable/copyable read-only view (edits go to a throwaway copy).
+                    let mut shown = report.clone();
+                    ui.add(
+                        egui::TextEdit::multiline(&mut shown)
+                            .desired_width(f32::INFINITY)
+                            .font(egui::TextStyle::Monospace),
+                    );
+                });
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui.button(RichText::new("Copy to clipboard").strong().color(theme::GREEN)).clicked() {
+                        ui.ctx().copy_text(report.clone());
+                        app.status = "Save-error report copied — paste it to us.".into();
+                    }
+                    if ui.button("Close").clicked() {
+                        keep_open = false;
+                    }
+                });
+            });
+        if !keep_open {
+            app.save_error = None;
+        }
     }
 }
 
@@ -1057,6 +1126,76 @@ fn pickers_page(app: &mut App, ui: &mut egui::Ui, pickers: &[Picker]) {
             }
         });
         ui.add_space(8.0);
+    }
+}
+
+/// NPC-only hairstyles applied at runtime by the `hairswap` UE4SS mod. The
+/// player's own hair lives in the save (edited above); these NPC styles can't (the
+/// game nulls a redirected part and crashes), so we write the pick to the mod's
+/// config file and it sets the mesh live. Hidden unless the hairswap mod is found.
+fn npc_hair_mod_page(app: &mut App, ui: &mut egui::Ui) {
+    let Some(cfg) = app.hairswap_cfg.clone() else { return };
+    ui.add_space(12.0);
+    ui.separator();
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.heading("NPC hairstyles");
+        theme::pill(ui, "hairswap mod", theme::MAUVE)
+            .on_hover_text("Applied live by the hairswap UE4SS mod — not stored in the save.");
+    });
+    ui.label(
+        RichText::new(
+            "26 hairstyles only NPCs wear. These can't be written to your character file — the \
+             hairswap mod puts the chosen one on you in-game. Takes effect on your next zone load \
+             or game launch; in-game you can also cycle with Ctrl+Shift+Y.",
+        )
+        .small()
+        .color(theme::SUBTEXT),
+    );
+    ui.add_space(6.0);
+
+    // Some(Some(id)) = pick that id; Some(None) = clear the override.
+    let mut choose: Option<Option<u32>> = None;
+    card(ui, |ui| {
+        ui.horizontal(|ui| {
+            let cur = match app.npc_hair {
+                Some(id) => format!("Current: #{id}"),
+                None => "Current: your own hair".to_string(),
+            };
+            ui.label(RichText::new(cur).strong().color(theme::TEXT));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add_enabled(app.npc_hair.is_some(), egui::Button::new("Clear"))
+                    .on_hover_text("Remove the override — the game uses your real hair.")
+                    .clicked()
+                {
+                    choose = Some(None);
+                }
+            });
+        });
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            for &id in npchair::NPC_HAIR_IDS {
+                if ui.selectable_label(app.npc_hair == Some(id), format!("#{id}")).clicked() {
+                    choose = Some(Some(id));
+                }
+            }
+        });
+    });
+
+    if let Some(pick) = choose {
+        match npchair::write(&cfg, pick) {
+            Ok(()) => {
+                app.npc_hair = pick;
+                match pick {
+                    Some(id) => app.note(format!(
+                        "NPC hair #{id} set for the hairswap mod — load a zone or relaunch to see it."
+                    )),
+                    None => app.note("Cleared the NPC-hair override — the game will use your own hair."),
+                }
+            }
+            Err(e) => app.note(format!("Couldn't write the hairswap config: {e}")),
+        }
     }
 }
 

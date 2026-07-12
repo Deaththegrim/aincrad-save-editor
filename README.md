@@ -21,6 +21,21 @@ key straight from your running game — no separate tool needed.
 
 ## Changes
 
+**0.1.9** — the **Hair** tab now has an *NPC hairstyles* section (shown when the
+`hairswap` UE4SS mod is installed). NPC-only hairstyles can't be written to a save —
+the game resolves them natively and would crash — so the editor writes your pick to
+the mod's config and it applies the style to your character in-game. Requires the
+mod loader / UE4SS + the `hairswap` mod.
+
+**0.1.8** — adds a **Match face to skin tone** button that repairs a face whose tone
+drifted from the body skin colour.
+
+**0.1.7** — **locks out the body `MeshScale` slider** (editing it resized every
+character and mob in the game) and adds a **Fix character scale** button to repair a
+save that already hit the bug.
+
+**0.1.6** — editing your **skin tone** now re-tints the face so the two stay matched.
+
 **0.1.5** — fixes a save-corruption bug where **changing your character name** could
 fail with `save length … is not a multiple of 16` and refuse to save. Renaming now
 works with any name (accented, Japanese, emoji, spaces, or empty). Both builds now
