@@ -53,7 +53,12 @@ stays in `aml-data/` next to the exe; nothing touches system folders).
 1. Launch it. On first run it asks for your Echoes of Aincrad pak AES key.
 2. No key? Launch the game, get into the world, then click **Recover from running
    game** — it reads your key from your own game and stores it locally.
+   (On Linux/SteamOS run the editor in Desktop Mode; recovery reads the running
+   game via `/proc`.)
 3. Edit appearance; **Apply to game** writes back (timestamped backup first).
+
+Already have a key stored and want to change it or re-recover? Click **Change key**
+in the top bar to return to the key screen at any time.
 
 It never ships or uploads a key, and it edits a copy of your save — your live save
 is only touched via *Apply to game*.
