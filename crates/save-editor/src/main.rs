@@ -751,7 +751,9 @@ impl eframe::App for App {
                 Category::Hair => {
                     pickers_page(self, ui, HAIR);
                     colours_page(self, ui, Category::Hair);
-                    npc_hair_mod_page(self, ui);
+                    if NPC_HAIR_SECTION_ENABLED {
+                        npc_hair_mod_page(self, ui);
+                    }
                 }
                 Category::Body => {
                     body_page(self, ui);
@@ -1031,6 +1033,11 @@ fn part_ids_for(folder: &str) -> &'static [i32] {
 /// end and CRASHES the game. The mod appends those meshes to the array, making the
 /// ids valid; only then is it safe to flip this on.
 const NPC_HAIR_ENABLED: bool = false;
+
+/// Show the "NPC hairstyles" section (drives the hairswap UE4SS mod) on the Hair
+/// tab. Hidden for now — the runtime hair swap isn't reliable yet and it was
+/// confusing users. Flip to `true` to bring it back once hairswap is solid.
+const NPC_HAIR_SECTION_ENABLED: bool = false;
 
 /// NPC-side extra ids for a part folder (only hair has any today).
 fn extra_ids_for(folder: &str) -> &'static [i32] {
