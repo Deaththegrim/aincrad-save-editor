@@ -816,6 +816,17 @@ fn top_bar(app: &mut App, ui: &mut egui::Ui) {
             if ui.add_enabled(has, egui::Button::new(t.reload)).clicked() {
                 app.load();
             }
+            // Return to the key screen (paste a new key, or re-recover from the game).
+            // Keeps recovery reachable after a key is stored — otherwise the button on
+            // the key screen is unreachable once a key is saved.
+            if ui
+                .button(t.change_key)
+                .on_hover_text("Go back to the key screen to paste a new key or recover it from the running game")
+                .clicked()
+            {
+                app.key = None;
+                app.key_input.clear();
+            }
             // Character-slot selector (only when the save holds more than one).
             let count = app.save.as_ref().map(|s| s.character_count()).unwrap_or(0);
             if count > 1 {
