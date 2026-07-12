@@ -67,5 +67,13 @@ cargo install cargo-xwin && rustup target add x86_64-pc-windows-msvc
 cargo xwin build --release -p aml-save-editor --target x86_64-pc-windows-msvc
 ```
 
+### Packaging the release zips
+
+`scripts/package.sh` builds both portable zips (Linux native + Windows MSVC) into
+`dist/`. It reuses the `aml-data/` payload (thumbnails + CJK font, generated from the
+game) from the existing dist zips and swaps in a fresh binary, and it **verifies each
+binary's embedded version matches `Cargo.toml`** — manual packaging has shipped a
+mislabeled build before.
+
 Unsigned build — Windows SmartScreen may warn on first run. Source is right here.
 MIT licensed.
