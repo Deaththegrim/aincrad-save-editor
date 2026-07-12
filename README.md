@@ -75,5 +75,22 @@ game) from the existing dist zips and swaps in a fresh binary, and it **verifies
 binary's embedded version matches `Cargo.toml`** — manual packaging has shipped a
 mislabeled build before.
 
+### Publishing to Nexus
+
+`scripts/nexus-upload.sh` pushes a built zip to Nexus via the **v3 upload API**
+(create session → PUT to presigned URL → finalise → poll → create file version).
+It **dry-runs by default**; add `--publish` and a key (`--key` / `NEXUS_API_KEY`,
+from nexusmods.com/settings/api-keys) to actually upload:
+
+```
+scripts/nexus-upload.sh --file dist/aml-save-editor-windows-x86_64.zip \
+  --file-id <FILE_ID> --version 0.1.9 --name "Aincrad Save Editor 0.1.9" --publish
+```
+
+`--file-id` adds a new version to an existing mod file; `--mod-id <game-scoped-id>`
+creates a brand-new file. Nexus also ships an official
+[GitHub Action](https://github.com/marketplace/actions/upload-to-nexus-mods) that
+wraps the same v3 flow for CI.
+
 Unsigned build — Windows SmartScreen may warn on first run. Source is right here.
 MIT licensed.
