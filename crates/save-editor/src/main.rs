@@ -1004,22 +1004,6 @@ fn identity_page(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
-/// The valid part IDs the game's character creator offers, per thumbnail folder.
-/// These are the SAVE ids (what the game stores), and they are NOT contiguous —
-/// face parts skip numbers, and hair (HeadGear) steps by 1000 (1001, 2001, …).
-/// Used to keep the no-thumbnail fallback stepper on real ids; when thumbnails are
-/// present, `available_ids` (read from the bundle) is the authoritative source.
-const PART_IDS: &[(&str, &[i32])] = &[
-    ("Nose", &[1, 2, 3, 4, 5, 6, 7, 8]),
-    ("Eyebrow", &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 18, 21, 22, 27, 28, 29]),
-    ("Eyeline", &[1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 19, 20, 22, 23, 24, 27, 28, 29, 33, 34]),
-    ("Pupil", &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-    ("Jaw", &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 30, 31, 32, 33, 34, 35, 36, 37, 38]),
-    ("HeadGear", &[1001, 2001, 3001, 4001, 5001, 6001, 7001, 8001, 9001, 10001, 11001, 12001, 13001, 14001, 15001, 16001, 17001, 18001, 19001, 20001]),
-    ("Mole", &[0, 1, 2, 3, 4, 5, 6, 7]),
-    ("Freckles", &[0, 1, 2]),
-];
-
 /// The **NPC side**: hairstyles the game defines in `DT_HeadGearParts` (the
 /// `HG800xxx`/`HG85xxxx` series used by NPCs / special characters) but does NOT
 /// offer in the character creator. Each has its own `HG*_Default` mesh parts, so
@@ -1034,8 +1018,15 @@ const NPC_HAIR: &[i32] = &[
 ];
 
 /// PC-side valid ids (character-creator) for a part folder (empty if unknown).
+/// The table lives in `aml-save` (`appearance::PART_IDS`) so the steppers here
+/// and the preset-apply validation share one source; when thumbnails are
+/// present, `available_ids` (read from the bundle) is the authoritative source.
 fn part_ids_for(folder: &str) -> &'static [i32] {
-    PART_IDS.iter().find(|(f, _)| *f == folder).map(|(_, v)| *v).unwrap_or(&[])
+    aml_save::appearance::PART_IDS
+        .iter()
+        .find(|p| p.folder == folder)
+        .map(|p| p.ids)
+        .unwrap_or(&[])
 }
 
 /// Whether to surface the NPC/extra hairs in the picker. OFF until the companion

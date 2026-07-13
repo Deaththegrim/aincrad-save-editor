@@ -33,11 +33,19 @@ impl Look {
     }
 
     /// Apply this look onto a character slot. Missing/incompatible fields are
-    /// skipped (so a look captured on another build won't corrupt the save).
+    /// skipped (so a look captured on another build won't corrupt the save), and
+    /// so are part ids the game's character creator doesn't offer — a shared or
+    /// hand-edited look carrying e.g. an NPC hair id (800001) would index off the
+    /// end of the game's fixed mesh arrays and break the character on load.
     /// Returns how many fields were applied.
     pub fn apply(&self, save: &mut SaveFile, slot: usize) -> usize {
         let mut n = 0;
         for (name, value) in &self.fields {
+            if let FieldValue::Int(v) = value {
+                if !crate::appearance::part_id_valid(name, *v) {
+                    continue;
+                }
+            }
             if save.set_appearance(slot, name, value.clone()).is_ok() {
                 n += 1;
             }

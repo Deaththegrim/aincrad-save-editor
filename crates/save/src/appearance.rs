@@ -122,6 +122,64 @@ fn group_for(name: &str) -> Group {
     }
 }
 
+/// One picker part: its save field, the editor's thumbnail folder, and every id
+/// the game's character creator offers (verified against the game's
+/// `AvatarCustomizeDataAsset` / `DT_*` thumbnail tables — the ids are NOT
+/// contiguous). Single source of truth so the UI steppers and preset validation
+/// can't drift apart. An id outside these sets (e.g. an NPC hair like 800001)
+/// indexes off the end of the game's fixed mesh arrays and breaks the character.
+pub struct PartIds {
+    /// Save field name (what `Field::name` / `set` use), e.g. "HeadGearID".
+    pub field: &'static str,
+    /// Thumbnail-bundle folder name the editor UI uses, e.g. "HeadGear".
+    pub folder: &'static str,
+    pub ids: &'static [i32],
+}
+
+pub const PART_IDS: &[PartIds] = &[
+    PartIds { field: "Nose", folder: "Nose", ids: &[1, 2, 3, 4, 5, 6, 7, 8] },
+    PartIds {
+        field: "Eyebrows",
+        folder: "Eyebrow",
+        ids: &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 18, 21, 22, 27, 28, 29],
+    },
+    PartIds {
+        field: "Eyeline",
+        folder: "Eyeline",
+        ids: &[1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 19, 20, 22, 23, 24, 27, 28, 29, 33, 34],
+    },
+    PartIds {
+        field: "Pupil",
+        folder: "Pupil",
+        ids: &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+    },
+    PartIds {
+        field: "HeadID",
+        folder: "Jaw",
+        ids: &[
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+            24, 25, 30, 31, 32, 33, 34, 35, 36, 37, 38,
+        ],
+    },
+    PartIds {
+        field: "HeadGearID",
+        folder: "HeadGear",
+        ids: &[
+            1001, 2001, 3001, 4001, 5001, 6001, 7001, 8001, 9001, 10001, 11001, 12001, 13001,
+            14001, 15001, 16001, 17001, 18001, 19001, 20001,
+        ],
+    },
+    PartIds { field: "MoleID", folder: "Mole", ids: &[0, 1, 2, 3, 4, 5, 6, 7] },
+    PartIds { field: "FrecklesID", folder: "Freckles", ids: &[0, 1, 2] },
+];
+
+/// Whether `value` is a game-valid id for the part field `field`. Fields with no
+/// id table (colours, sliders, toggles) are always valid — only known part ids
+/// are checked.
+pub fn part_id_valid(field: &str, value: i32) -> bool {
+    PART_IDS.iter().find(|p| p.field == field).is_none_or(|p| p.ids.contains(&value))
+}
+
 /// Read every editable appearance field for a character slot.
 pub fn read(save: &Save, slot: usize) -> Result<Vec<Field>, SaveError> {
     let av = avatar(save, slot)?;

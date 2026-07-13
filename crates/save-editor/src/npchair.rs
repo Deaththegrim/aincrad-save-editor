@@ -8,11 +8,12 @@
 
 use std::path::{Path, PathBuf};
 
-/// The 26 NPC-only hair style ids — identical to `hairswap`'s NPC id list.
+/// The 27 NPC-only hair style ids — the full `DT_HeadGearParts` NPC set, kept in
+/// sync with `hairswap`'s id list and `main.rs`'s `NPC_HAIR`.
 pub const NPC_HAIR_IDS: &[u32] = &[
     800001, 801001, 801021, 802001, 803001, 804001, 805001, 806001, 807001, 807031,
-    807502, 807504, 808001, 809001, 850001, 851001, 851503, 852001, 852011, 853001,
-    854001, 854011, 855001, 856001, 856031, 857001,
+    807502, 807504, 808001, 809001, 850001, 850505, 851001, 851503, 852001, 852011,
+    853001, 854001, 854011, 855001, 856001, 856031, 857001,
 ];
 
 /// Path to the hairswap mod's config file, if the mod is installed in the detected
@@ -83,6 +84,7 @@ mod tests {
 
     #[test]
     fn ids_match_mod_count() {
-        assert_eq!(NPC_HAIR_IDS.len(), 26);
+        // The full DT_HeadGearParts NPC set (850505 included since 0.1.12).
+        assert_eq!(NPC_HAIR_IDS.len(), 27);
     }
 }

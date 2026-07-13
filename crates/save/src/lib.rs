@@ -131,12 +131,24 @@ fn realign_eoa(plain: &mut Vec<u8>, extra: &[u8]) {
     // `extra`, with the body everything before it. Preserve the footer (from the
     // `GVAS` magic onward) and rebuild the pad so the file is 16-aligned (AES-ECB).
     if let Some(g) = extra.windows(MAGIC.len()).position(|w| w == MAGIC) {
-        if plain.len() >= extra.len() {
+        // `ends_with` guards the truncation: if uesave ever serialized WITHOUT
+        // appending `extra`, subtracting its length would cut real body bytes.
+        if plain.len() >= extra.len() && plain.ends_with(extra) {
             let footer = extra[g..].to_vec();
             let body_len = plain.len() - extra.len();
             repad_eoa(plain, body_len, &footer);
             return;
         }
+    }
+    // Footer-less variant: some saves end in just zero padding with no trailing
+    // `GVAS` magic — uesave hands that pad as an all-zeros `extra` (seen in the
+    // wild as 4 zero bytes). Keep the original extra verbatim (it's all zeros,
+    // so it's correct whether the game treats it as pad or as a real zero
+    // field) and rebuild the alignment pad in front of it.
+    if !extra.is_empty() && extra.iter().all(|&b| b == 0) && plain.ends_with(extra) {
+        let body_len = plain.len() - extra.len();
+        repad_eoa(plain, body_len, extra);
+        return;
     }
     // Fallback: some saves don't expose the trailer as `extra` (a different game
     // build, or a uesave parse that folds it into the body) — that's the case
@@ -274,6 +286,37 @@ mod tests {
     }
 
     #[test]
+    fn realign_footerless_zero_pad_trailer() {
+        // Reported from the wild (0.1.11 rename on Windows): the save has NO
+        // trailing GVAS footer — the trailer is just zero padding, and uesave
+        // hands it over as an all-zeros 4-byte `extra`. A length-changing edit
+        // then serialized to a non-multiple-of-16 and the editor refused.
+        // realign must rebuild the pad (keeping the original zeros) instead.
+        let extra = [0u8, 0, 0, 0];
+        for body in 1..48usize {
+            let mut plain = vec![0xAB; body];
+            plain.extend_from_slice(b"\x05\x00\x00\x00None\0"); // GVAS terminator
+            let body_len = plain.len();
+            plain.extend_from_slice(&extra);
+            realign_eoa(&mut plain, &extra);
+            assert_eq!(plain.len() % 16, 0, "body {body}: not 16-aligned");
+            assert_eq!(&plain[..body_len], &{
+                let mut b = vec![0xAB; body];
+                b.extend_from_slice(b"\x05\x00\x00\x00None\0");
+                b
+            }[..], "body {body}: body corrupted");
+            assert!(
+                plain[body_len..].iter().all(|&b| b == 0),
+                "body {body}: trailer must stay all zeros"
+            );
+            assert!(
+                plain.len() - body_len >= extra.len(),
+                "body {body}: original zero trailer must not shrink"
+            );
+        }
+    }
+
+    #[test]
     fn realign_fallback_when_extra_lacks_gvas() {
         // The friend's case: uesave didn't hand us a GVAS-bearing `extra`, but the
         // serialized buffer still ends with `[body][zero pad][GVAS]`. realign must
@@ -396,6 +439,39 @@ mod tests {
         file.set_appearance(0, "Gender", FieldValue::Enum(flipped.clone())).expect("set gender");
         let now = file.appearance(0).unwrap().into_iter().find(|f| f.name == "Gender").unwrap();
         assert_eq!(now.value, FieldValue::Enum(flipped));
+    }
+
+    #[test]
+    fn part_id_validation_matches_creator_sets() {
+        use crate::appearance::part_id_valid;
+        // NPC hair ids must never pass — writing one into the save indexes off
+        // the game's fixed hair-mesh array and breaks the character on load.
+        assert!(!part_id_valid("HeadGearID", 800001));
+        assert!(!part_id_valid("HeadGearID", 850505));
+        assert!(!part_id_valid("HeadGearID", 1000)); // off-pattern junk
+        assert!(part_id_valid("HeadGearID", 1001));
+        assert!(part_id_valid("HeadGearID", 20001));
+        assert!(!part_id_valid("Eyebrows", 13)); // creator skips this id
+        assert!(part_id_valid("MoleID", 0)); // 0 = none is legal
+        // Non-part fields have no id table and are never blocked.
+        assert!(part_id_valid("MeshScale", 12345));
+    }
+
+    #[test]
+    fn look_apply_skips_npc_hair_id() {
+        // A shared/hand-edited look carrying an NPC hair must not reach the save.
+        let Some((key, sav)) = local() else { return };
+        let mut file = SaveFile::load(&sav, key.trim()).expect("load");
+        let before = file.appearance(0).unwrap().into_iter()
+            .find(|f| f.name == "HeadGearID").map(|f| f.value);
+        let look = crate::preset::Look::from_json(
+            r#"{"name":"evil","fields":[["HeadGearID",{"Int":800001}],["Nose",{"Int":3}]]}"#,
+        ).unwrap();
+        let applied = look.apply(&mut file, 0);
+        assert_eq!(applied, 1, "only the valid Nose edit may apply");
+        let after = file.appearance(0).unwrap().into_iter()
+            .find(|f| f.name == "HeadGearID").map(|f| f.value);
+        assert_eq!(before, after, "NPC hair id must not be written");
     }
 
     #[test]
