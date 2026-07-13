@@ -150,6 +150,22 @@ fn realign_eoa(plain: &mut Vec<u8>, extra: &[u8]) {
         repad_eoa(plain, body_len, extra);
         return;
     }
+    // Clipped-magic variant (from the wild, 0.1.11 on Windows): the trailer is
+    // `[zero pad][a 1-3 byte PREFIX of the GVAS magic]` — the game's writer cut
+    // the footer at the 16-aligned end of file (diagnostic showed a 5-byte
+    // `extra` of 4 zeros + a lone b'G'). Keep the original extra verbatim
+    // (pad-or-field reasoning as above; never shrink the original trailer) and
+    // rebuild the alignment zeros in front of it. A full `GVAS` is handled by
+    // the primary branch, so the prefix here is strictly shorter than 4 bytes.
+    if !extra.is_empty() && plain.ends_with(extra) {
+        let nz = extra.iter().position(|&b| b != 0).unwrap_or(extra.len());
+        let tail = &extra[nz..];
+        if !tail.is_empty() && tail.len() < MAGIC.len() && MAGIC.starts_with(tail) {
+            let body_len = plain.len() - extra.len();
+            repad_eoa(plain, body_len, extra);
+            return;
+        }
+    }
     // Fallback: some saves don't expose the trailer as `extra` (a different game
     // build, or a uesave parse that folds it into the body) — that's the case
     // behind a mysterious "length not a multiple of 16" on write. The serialized
@@ -317,6 +333,46 @@ mod tests {
     }
 
     #[test]
+    fn realign_clipped_magic_trailer() {
+        // Reported from the wild (0.1.11 on Windows): `extra` is 4 zero-pad
+        // bytes + a lone b'G' — the game clipped the GVAS magic at the aligned
+        // end of file. realign must keep the original trailer verbatim and
+        // rebuild alignment zeros in front, never corrupting the body.
+        for clip in 1..4usize {
+            let extra: Vec<u8> = [&[0u8, 0, 0, 0][..], &b"GVAS"[..clip]].concat();
+            for body in 1..48usize {
+                let mut expected_body = vec![0xAB; body];
+                expected_body.extend_from_slice(b"\x05\x00\x00\x00None\0");
+                let mut plain = expected_body.clone();
+                plain.extend_from_slice(&extra);
+                realign_eoa(&mut plain, &extra);
+                assert_eq!(plain.len() % 16, 0, "clip {clip} body {body}: not 16-aligned");
+                assert!(
+                    plain.ends_with(&extra),
+                    "clip {clip} body {body}: original trailer must survive at the end"
+                );
+                assert_eq!(
+                    &plain[..expected_body.len()],
+                    &expected_body[..],
+                    "clip {clip} body {body}: body corrupted"
+                );
+                assert!(
+                    plain[expected_body.len()..plain.len() - extra.len()].iter().all(|&b| b == 0),
+                    "clip {clip} body {body}: rebuilt pad must be zeros"
+                );
+            }
+        }
+        // The exact lengths from the wild diagnostic: serialized 450030 with a
+        // 5-byte extra → 450032 after realign (pad of 2 rebuilt in front).
+        let extra = [0u8, 0, 0, 0, b'G'];
+        let mut plain = vec![0xCD; 450_030 - extra.len()];
+        plain.extend_from_slice(&extra);
+        realign_eoa(&mut plain, &extra);
+        assert_eq!(plain.len(), 450_032);
+        assert!(plain.ends_with(&extra));
+    }
+
+    #[test]
     fn realign_fallback_when_extra_lacks_gvas() {
         // The friend's case: uesave didn't hand us a GVAS-bearing `extra`, but the
         // serialized buffer still ends with `[body][zero pad][GVAS]`. realign must
@@ -472,6 +528,36 @@ mod tests {
         let after = file.appearance(0).unwrap().into_iter()
             .find(|f| f.name == "HeadGearID").map(|f| f.value);
         assert_eq!(before, after, "NPC hair id must not be written");
+    }
+
+    #[test]
+    fn look_apply_skips_out_of_range_floats() {
+        // Reported from the wild: a chest morph pushed far past the creator's
+        // -1..1 span extrapolates the BS_BOD_Chest morph and pinches the neck
+        // ("pipe-cleaner neck"). The UI sliders clamp, so the only editor path
+        // to such a value is a shared/hand-edited look — apply must skip it.
+        // MeshScale ≠ 1.0 must also be skipped (the global scale bug).
+        use crate::appearance::float_valid;
+        assert!(float_valid("Chest", -1.0));
+        assert!(float_valid("Chest", 1.0));
+        assert!(!float_valid("Chest", -3.0));
+        assert!(!float_valid("Chest", f32::NAN));
+        assert!(float_valid("MeshScale", 1.0));
+        assert!(!float_valid("MeshScale", 0.6));
+        assert!(float_valid("SomeUnknownFloat", 42.0)); // no table → not blocked
+
+        let Some((key, sav)) = local() else { return };
+        let mut file = SaveFile::load(&sav, key.trim()).expect("load");
+        let before_chest = file.appearance(0).unwrap().into_iter()
+            .find(|f| f.name == "Chest").map(|f| f.value);
+        let look = crate::preset::Look::from_json(
+            r#"{"name":"warped","fields":[["Chest",{"Float":-3.0}],["MeshScale",{"Float":0.5}],["Nose",{"Int":3}]]}"#,
+        ).unwrap();
+        let applied = look.apply(&mut file, 0);
+        assert_eq!(applied, 1, "only the valid Nose edit may apply");
+        let after_chest = file.appearance(0).unwrap().into_iter()
+            .find(|f| f.name == "Chest").map(|f| f.value);
+        assert_eq!(before_chest, after_chest, "out-of-range Chest must not be written");
     }
 
     #[test]

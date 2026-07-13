@@ -46,6 +46,16 @@ impl Look {
                     continue;
                 }
             }
+            // Same treatment for body floats: an out-of-range morph weight
+            // (hand-edited look, or captured on a broken save) extrapolates the
+            // morph and warps the mesh — e.g. a Chest far below -1.0 pinches
+            // the neck base. This also skips any MeshScale ≠ 1.0, so a look
+            // can't re-introduce the global scale bug.
+            if let FieldValue::Float(v) = value {
+                if !crate::appearance::float_valid(name, *v) {
+                    continue;
+                }
+            }
             if save.set_appearance(slot, name, value.clone()).is_ok() {
                 n += 1;
             }

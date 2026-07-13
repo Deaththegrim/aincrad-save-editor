@@ -180,6 +180,41 @@ pub fn part_id_valid(field: &str, value: i32) -> bool {
     PART_IDS.iter().find(|p| p.field == field).is_none_or(|p| p.ids.contains(&value))
 }
 
+/// Body-shape float fields and their safe range: `(save field, min, max)`.
+///
+/// The morph weights run -1.0..=1.0 — the game's own char-creator span (from the
+/// WBP_AvatarCustomize slider blueprints). Each maps to a `BS_BOD_*` morph
+/// target on the costume meshes; outside the span the morph extrapolates and
+/// warps the mesh (a chest far below -1.0 pinches the neck base, since the
+/// `BS_BOD_Chest` deltas reach into it and there is no separate neck morph).
+///
+/// `MeshScale` is pinned to exactly 1.0: the character creator never exposes
+/// it, and a drifted value resizes every character and mob in the game (the
+/// "scale bug" — see the editor's fix_scale). Single source of truth for the
+/// UI sliders AND preset validation, like [`PART_IDS`].
+pub const FLOAT_RANGES: &[(&str, f32, f32)] = &[
+    ("Chest", -1.0, 1.0),
+    ("Arms", -1.0, 1.0),
+    ("ForeArms", -1.0, 1.0),
+    ("Hands", -1.0, 1.0),
+    ("Belly", -1.0, 1.0),
+    ("Butts", -1.0, 1.0),
+    ("Hips", -1.0, 1.0),
+    ("Thighs", -1.0, 1.0),
+    ("Legs", -1.0, 1.0),
+    ("Feet", -1.0, 1.0),
+    ("MeshScale", 1.0, 1.0),
+];
+
+/// Whether `value` is inside the safe range for the float field `field`.
+/// Fields with no range entry are always valid; NaN never is.
+pub fn float_valid(field: &str, value: f32) -> bool {
+    FLOAT_RANGES
+        .iter()
+        .find(|(f, _, _)| *f == field)
+        .is_none_or(|(_, lo, hi)| (*lo..=*hi).contains(&value))
+}
+
 /// Read every editable appearance field for a character slot.
 pub fn read(save: &Save, slot: usize) -> Result<Vec<Field>, SaveError> {
     let av = avatar(save, slot)?;

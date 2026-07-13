@@ -21,6 +21,16 @@ key straight from your running game — no separate tool needed.
 
 ## Changes
 
+**0.1.13** — supports another save-trailer shape reported from the wild (the
+`GVAS` end-of-file magic clipped to a single byte), which made saving refuse with
+"**This save has an unrecognized trailer**" on affected saves. Also extends preset
+validation to body sliders: applying a Look now skips body morph weights outside
+the character creator's -1..1 span (an extrapolated morph warps the mesh — e.g. an
+out-of-range Chest pinches the neck) and skips any preset `MeshScale` that isn't
+exactly 1.0, so a shared look can't re-introduce the global body-scale bug. The
+slider ranges are now a single source shared by the UI and that validation. Adds a
+window icon.
+
 **0.1.12** — fixes a "**This save has an unrecognized trailer**" refusal when saving a
 length-changing edit (rename, voice, gender) on saves whose trailer is plain zero
 padding with no `GVAS` footer — a format reported from the wild that the re-padder
@@ -104,7 +114,7 @@ from nexusmods.com/settings/api-keys) to actually upload:
 
 ```
 scripts/nexus-upload.sh --file dist/aml-save-editor-windows-x86_64.zip \
-  --file-id <FILE_ID> --version 0.1.12 --name "Aincrad Save Editor 0.1.12" --publish
+  --file-id <FILE_ID> --version 0.1.13 --name "Aincrad Save Editor 0.1.13" --publish
 ```
 
 `--file-id` adds a new version to an existing mod file; `--mod-id <game-scoped-id>`

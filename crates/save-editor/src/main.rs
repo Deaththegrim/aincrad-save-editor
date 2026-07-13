@@ -50,7 +50,11 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1000.0, 720.0])
             .with_min_inner_size([760.0, 520.0])
-            .with_title("Aincrad Save Editor"),
+            .with_title("Aincrad Save Editor")
+            .with_icon(
+                eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
+                    .expect("bundled window icon is a valid PNG"),
+            ),
         ..Default::default()
     };
     eframe::run_native(
@@ -1262,38 +1266,19 @@ fn looks_page(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
-/// Body-shape sliders and their safe caps: `(save field, min, max)`.
-///
-/// The 10 morph weights run -1.0..=1.0 — the game's own char-creator range,
-/// confirmed from the WBP_AvatarCustomize slider blueprints; outside it the
-/// morphs extrapolate and warp the mesh. Clamping to these is what keeps a user
-/// from breaking their model.
-///
-/// `MeshScale` (overall body scale) is deliberately NOT here: the character
-/// creator never exposes it, and a non-1.0 value scales *every* character and mob
-/// in the game to the same height (a reported save-breaking bug). It's no longer
-/// editable; loading a save with a drifted value flags `scale_bug` and offers a
-/// one-click `fix_scale` to reset it to 1.0.
-const BODY_SLIDERS: &[(&str, f32, f32)] = &[
-    ("Chest", -1.0, 1.0),
-    ("Arms", -1.0, 1.0),
-    ("ForeArms", -1.0, 1.0),
-    ("Hands", -1.0, 1.0),
-    ("Belly", -1.0, 1.0),
-    ("Butts", -1.0, 1.0),
-    ("Hips", -1.0, 1.0),
-    ("Thighs", -1.0, 1.0),
-    ("Legs", -1.0, 1.0),
-    ("Feet", -1.0, 1.0),
-];
-
 fn body_page(app: &mut App, ui: &mut egui::Ui) {
     let t = app.tr();
     ui.heading(t.cat_body);
     ui.add_space(4.0);
+    // The slider list and its safe caps come from `appearance::FLOAT_RANGES`
+    // (one source with preset validation). Pinned entries (lo == hi, i.e.
+    // MeshScale) aren't sliders: the creator never exposes MeshScale, and a
+    // drifted value resizes every character and mob in the game — loading such
+    // a save flags `scale_bug` and offers the one-click `fix_scale` instead.
     // Only show sliders for fields actually present in this save.
-    let present: Vec<(&'static str, f32, f32, f32)> = BODY_SLIDERS
+    let present: Vec<(&'static str, f32, f32, f32)> = aml_save::appearance::FLOAT_RANGES
         .iter()
+        .filter(|&&(_, lo, hi)| lo < hi)
         .filter_map(|&(name, lo, hi)| app.float(name).map(|v| (name, lo, hi, v)))
         .collect();
     if present.is_empty() {
