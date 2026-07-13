@@ -1451,17 +1451,12 @@ fn pak_from_running_game() -> Option<PathBuf> {
     None
 }
 
-/// The valid character voices, in order, per gender. Echoes of Aincrad ships
-/// exactly 6 voices each. Note the quirk: voice 1 is the BARE "Player_M" /
-/// "Player_F" (no number), and voices 2-6 are "_02".."_06" — there is no "_01",
-/// and nothing above "_06". (Confirmed against the game's Switch_Avatar_Voice
-/// assets.) The old code stepped the trailing number blindly and produced
-/// "Player_M_07" / "Player_M_01", which the game has no asset for and silently
-/// ignores — that was the "voice won't change" bug.
-const MALE_VOICES: [&str; 6] =
-    ["Player_M", "Player_M_02", "Player_M_03", "Player_M_04", "Player_M_05", "Player_M_06"];
-const FEMALE_VOICES: [&str; 6] =
-    ["Player_F", "Player_F_02", "Player_F_03", "Player_F_04", "Player_F_05", "Player_F_06"];
+// The valid character voices live in `aml_save::appearance` — single source
+// for this stepper AND preset validation. Voice 1 is the BARE "Player_M" /
+// "Player_F" (no "_01", nothing above "_06"); the old code stepped the number
+// blindly and produced ids the game has no asset for and silently ignores —
+// that was the "voice won't change" bug.
+use aml_save::appearance::{FEMALE_VOICES, MALE_VOICES};
 
 /// Which voice list applies, picked by the voice's own gender prefix.
 fn voice_list(voice: &str) -> &'static [&'static str] {

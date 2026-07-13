@@ -21,6 +21,16 @@ key straight from your running game — no separate tool needed.
 
 ## Changes
 
+**0.1.15** — preset hardening, verified against the game's own data (DataTables +
+UHT header dump): applying a Look now also validates Voice (must be one of the 12
+voices the game ships) and Gender (the enum has exactly Male/Female), and skips
+colour values with non-finite components — previously a hand-edited look could
+write any of those into the save. A look also no longer applies `HeroName`: it's
+an appearance, not an identity, and applying a shared look must not silently
+rename your character. The voice table is now a single source shared by the UI
+stepper and preset validation, and a schema-drift test fails the build if a game
+patch adds a save field with no validation entry.
+
 **0.1.14** — richer "unrecognized trailer" diagnostic: the copy-pasteable report
 now also includes the save's decrypted length at load time and a journal of what
 was edited since load (each changed field with old → new value, coalesced; preset

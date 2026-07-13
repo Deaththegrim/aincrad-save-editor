@@ -34,13 +34,22 @@ impl Look {
 
     /// Apply this look onto a character slot. Missing/incompatible fields are
     /// skipped (so a look captured on another build won't corrupt the save), and
-    /// so are part ids the game's character creator doesn't offer — a shared or
-    /// hand-edited look carrying e.g. an NPC hair id (800001) would index off the
-    /// end of the game's fixed mesh arrays and break the character on load.
+    /// so is anything the game has no asset/meaning for: part ids the character
+    /// creator doesn't offer (an NPC hair id like 800001 indexes off the end of
+    /// the game's fixed mesh arrays and breaks the character), out-of-range body
+    /// floats, unknown Voice/Gender values, and non-finite colour components.
+    /// `HeroName` is never applied — a look is an appearance, not an identity,
+    /// and applying a shared look must not silently rename the character.
     /// Returns how many fields were applied.
     pub fn apply(&self, save: &mut SaveFile, slot: usize) -> usize {
         let mut n = 0;
         for (name, value) in &self.fields {
+            if name == "HeroName" {
+                continue;
+            }
+            if !crate::appearance::identity_valid(name, value) {
+                continue;
+            }
             if let FieldValue::Int(v) = value {
                 if !crate::appearance::part_id_valid(name, *v) {
                     continue;
@@ -53,6 +62,11 @@ impl Look {
             // can't re-introduce the global scale bug.
             if let FieldValue::Float(v) = value {
                 if !crate::appearance::float_valid(name, *v) {
+                    continue;
+                }
+            }
+            if let FieldValue::Color(c) = value {
+                if !crate::appearance::color_valid(c) {
                     continue;
                 }
             }

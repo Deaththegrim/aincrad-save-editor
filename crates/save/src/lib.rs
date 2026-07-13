@@ -693,6 +693,84 @@ mod tests {
     }
 
     #[test]
+    fn look_apply_skips_identity_junk_and_never_renames() {
+        // Names/Enums/Colors had NO validation on preset apply: a hand-edited
+        // look could write a Voice the game has no audio for, a Gender outside
+        // the game's 2-value ECharacterSex enum, a NaN colour component, or —
+        // worst — silently RENAME the character (a look is an appearance, not
+        // an identity).
+        use crate::appearance::{color_valid, identity_valid};
+        assert!(identity_valid("Voice", &FieldValue::Name("Player_F_06".into())));
+        assert!(!identity_valid("Voice", &FieldValue::Name("Player_M_99".into())));
+        assert!(!identity_valid("Voice", &FieldValue::Name("Player_M_01".into()))); // no _01
+        assert!(identity_valid("Gender", &FieldValue::Enum("ECharacterSex::Female".into())));
+        assert!(!identity_valid("Gender", &FieldValue::Enum("ECharacterSex::Banana".into())));
+        assert!(color_valid(&[0.5, 0.5, 0.5, 1.0]));
+        assert!(!color_valid(&[f32::NAN, 0.5, 0.5, 1.0]));
+        assert!(!color_valid(&[0.5, f32::INFINITY, 0.5, 1.0]));
+
+        let Some((key, sav)) = local() else { return };
+        let mut file = SaveFile::load(&sav, key.trim()).expect("load");
+        let field = |f: &SaveFile, name: &str| {
+            f.appearance(0).unwrap().into_iter().find(|x| x.name == name).map(|x| x.value)
+        };
+        let before_name = field(&file, "HeroName");
+        let before_voice = field(&file, "Voice");
+        let before_gender = field(&file, "Gender");
+        let before_skin = field(&file, "CustomColorSkin");
+        // Built directly (not via JSON): serde_json rejects non-finite literals,
+        // but a look written by other tooling can still carry them.
+        let look = crate::preset::Look {
+            name: "junk".into(),
+            kind: "aml-look-v1".into(),
+            fields: vec![
+                ("HeroName".into(), FieldValue::Str("Imposter".into())),
+                ("Voice".into(), FieldValue::Name("Player_M_99".into())),
+                ("Gender".into(), FieldValue::Enum("ECharacterSex::Banana".into())),
+                ("CustomColorSkin".into(), FieldValue::Color([f32::INFINITY, 0.5, 0.5, 1.0])),
+                ("Nose".into(), FieldValue::Int(3)),
+            ],
+        };
+        let applied = look.apply(&mut file, 0);
+        assert_eq!(applied, 1, "only the valid Nose edit may apply");
+        assert_eq!(before_name, field(&file, "HeroName"), "a look must never rename");
+        assert_eq!(before_voice, field(&file, "Voice"), "unknown voice must not be written");
+        assert_eq!(before_gender, field(&file, "Gender"), "bogus gender must not be written");
+        assert_eq!(before_skin, field(&file, "CustomColorSkin"), "non-finite colour must not be written");
+    }
+
+    #[test]
+    fn every_save_field_is_covered_by_a_validation_table() {
+        // Schema-drift guard: if a game patch adds a new part id or body slider
+        // to the save, it would flow through preset apply UNVALIDATED (unknown
+        // fields default to "always valid"). Fail here first, so the new field
+        // gets a verified entry in PART_IDS / FLOAT_RANGES before shipping.
+        let Some((key, sav)) = local() else { return };
+        let file = SaveFile::load(&sav, key.trim()).expect("load");
+        for f in file.appearance(0).unwrap() {
+            match f.value {
+                FieldValue::Int(_) => assert!(
+                    appearance::PART_IDS.iter().any(|p| p.field == f.name),
+                    "Int field {} has no PART_IDS entry — verify its creator set and add it",
+                    f.name
+                ),
+                FieldValue::Float(_) => assert!(
+                    appearance::FLOAT_RANGES.iter().any(|(n, _, _)| *n == f.name),
+                    "Float field {} has no FLOAT_RANGES entry — verify its creator span and add it",
+                    f.name
+                ),
+                FieldValue::Name(_) | FieldValue::Enum(_) => assert!(
+                    matches!(f.name.as_str(), "Voice" | "Gender"),
+                    "Name/Enum field {} has no identity validation — add it to identity_valid",
+                    f.name
+                ),
+                // Strs (HeroName), Bools and Colors have blanket handling.
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
     fn look_capture_json_apply_roundtrip() {
         let Some((key, sav)) = local() else { return };
         let mut file = SaveFile::load(&sav, key.trim()).expect("load");

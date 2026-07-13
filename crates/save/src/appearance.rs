@@ -215,6 +215,41 @@ pub fn float_valid(field: &str, value: f32) -> bool {
         .is_none_or(|(_, lo, hi)| (*lo..=*hi).contains(&value))
 }
 
+/// The character voices the game ships, in creator order, per gender — exactly
+/// 6 each, verified against `DT_AvatarCustomize_Voice` and the
+/// `Switch_Avatar_Voice_*` Wwise assets. Voice 1 is the BARE name (there is no
+/// "_01"), and nothing exists above "_06" — an id outside these sets has no
+/// audio asset. Single source for the UI stepper AND preset validation, like
+/// [`PART_IDS`].
+pub const MALE_VOICES: [&str; 6] =
+    ["Player_M", "Player_M_02", "Player_M_03", "Player_M_04", "Player_M_05", "Player_M_06"];
+pub const FEMALE_VOICES: [&str; 6] =
+    ["Player_F", "Player_F_02", "Player_F_03", "Player_F_04", "Player_F_05", "Player_F_06"];
+
+/// The exact values of the game's `ECharacterSex` enum (from the UHT header
+/// dump: `Male = 0`, `Female = 1`, nothing else).
+pub const GENDERS: [&str; 2] = ["ECharacterSex::Male", "ECharacterSex::Female"];
+
+/// Whether `value` is a game-valid value for an identity field. Voice must be
+/// one of the 12 shipped voices and Gender one of the two real enum values —
+/// anything else has no game asset/meaning behind it. Fields without a
+/// known-values table are always valid, mirroring [`part_id_valid`].
+pub fn identity_valid(field: &str, value: &FieldValue) -> bool {
+    match (field, value) {
+        ("Voice", FieldValue::Name(v)) => {
+            MALE_VOICES.contains(&v.as_str()) || FEMALE_VOICES.contains(&v.as_str())
+        }
+        ("Gender", FieldValue::Enum(v)) => GENDERS.contains(&v.as_str()),
+        _ => true,
+    }
+}
+
+/// Whether a colour is safe to write: all components finite (a NaN/inf smuggled
+/// in via a hand-edited preset would be serialized verbatim into the save).
+pub fn color_valid(c: &[f32; 4]) -> bool {
+    c.iter().all(|v| v.is_finite())
+}
+
 /// Read every editable appearance field for a character slot.
 pub fn read(save: &Save, slot: usize) -> Result<Vec<Field>, SaveError> {
     let av = avatar(save, slot)?;
