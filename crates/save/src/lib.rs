@@ -30,11 +30,20 @@ pub enum SaveError {
          Please send this to the developer so it can be supported:\n\
          --- EoA save diagnostic ---\n\
          serialized length: {len} (needs a multiple of 16)\n\
+         loaded length: {loaded_len} (decrypted; was 16-aligned on disk)\n\
          uesave extra ({extra_len} bytes): {extra_hex}\n\
          last 32 bytes: {tail_hex}\n\
+         edits since load: {edits}\n\
          ---------------------------"
     )]
-    Unaligned { len: usize, extra_len: usize, extra_hex: String, tail_hex: String },
+    Unaligned {
+        len: usize,
+        loaded_len: usize,
+        extra_len: usize,
+        extra_hex: String,
+        tail_hex: String,
+        edits: String,
+    },
     #[error("could not parse the decrypted save as a UE5 GVAS SaveGame: {0}")]
     Parse(String),
     #[error("could not re-serialize the save: {0}")]
@@ -51,6 +60,14 @@ pub struct SaveFile {
     save: Save,
     /// Path it was loaded from (for reference; `write` can target elsewhere).
     pub source: PathBuf,
+    /// Decrypted length at load time (16-aligned, since the file decrypted).
+    /// Diagnostic-only: lets a trailer-refusal report show the length delta.
+    loaded_len: usize,
+    /// Coalesced edit journal for diagnostics: `(key, first old, latest new)`
+    /// per edited field, in first-edit order. Marker lines (e.g. a preset
+    /// apply) have empty old/new. Field VALUES are recorded except HeroName,
+    /// which is reduced to length/encoding — the report gets pasted publicly.
+    journal: Vec<(String, String, String)>,
 }
 
 impl SaveFile {
@@ -61,7 +78,13 @@ impl SaveFile {
         let plain = crypto::decrypt(&key, &raw)?;
         let save = Save::read(&mut std::io::Cursor::new(&plain))
             .map_err(|e| SaveError::Parse(e.to_string()))?;
-        Ok(Self { key, save, source: path.as_ref().to_path_buf() })
+        Ok(Self {
+            key,
+            save,
+            source: path.as_ref().to_path_buf(),
+            loaded_len: plain.len(),
+            journal: Vec::new(),
+        })
     }
 
     /// Re-serialize + re-encrypt and write to `path`. If `path` already exists,
@@ -78,9 +101,11 @@ impl SaveFile {
             let tail = &plain[plain.len().saturating_sub(32)..];
             return Err(SaveError::Unaligned {
                 len: plain.len(),
+                loaded_len: self.loaded_len,
                 extra_len: self.save.extra.len(),
                 extra_hex: hex(&self.save.extra),
                 tail_hex: hex(tail),
+                edits: self.edits_summary(),
             });
         }
         let enc = crypto::encrypt(&self.key, &plain)?;
@@ -103,14 +128,83 @@ impl SaveFile {
         &self.source
     }
 
-    /// Set one appearance field on a slot.
+    /// Set one appearance field on a slot. Records the change in the edit
+    /// journal (coalesced per field) so a later save-failure diagnostic can
+    /// show what was edited.
     pub fn set_appearance(
         &mut self,
         slot: usize,
         name: &str,
         value: appearance::FieldValue,
     ) -> Result<(), SaveError> {
-        appearance::set(&mut self.save, slot, name, value)
+        let old = appearance::read(&self.save, slot)
+            .ok()
+            .and_then(|fs| fs.into_iter().find(|f| f.name == name))
+            .map(|f| fmt_field(name, &f.value))
+            .unwrap_or_else(|| "?".into());
+        appearance::set(&mut self.save, slot, name, value.clone())?;
+        let new = fmt_field(name, &value);
+        let key = format!("slot{slot}.{name}");
+        if let Some(i) = self.journal.iter().position(|(k, _, _)| *k == key) {
+            if self.journal[i].1 == new {
+                // Edited back to the original value — not a change anymore.
+                self.journal.remove(i);
+            } else {
+                self.journal[i].2 = new;
+            }
+        } else if old != new {
+            self.journal.push((key, old, new));
+        }
+        Ok(())
+    }
+
+    /// Append a free-form marker to the edit journal (e.g. "applied look X"),
+    /// so a save-failure diagnostic shows the operation, not just its fields.
+    pub fn note_edit(&mut self, marker: impl Into<String>) {
+        self.journal.push((marker.into(), String::new(), String::new()));
+    }
+
+    /// The edit journal as one diagnostic string (see [`SaveError::Unaligned`]).
+    fn edits_summary(&self) -> String {
+        edits_summary(&self.journal)
+    }
+}
+
+/// Render the edit journal for the copy-pasteable diagnostic: one indented
+/// line per coalesced field change, `* `-prefixed lines for operation markers.
+fn edits_summary(journal: &[(String, String, String)]) -> String {
+    if journal.is_empty() {
+        return "none recorded (length change came from re-serialization alone)".into();
+    }
+    journal
+        .iter()
+        .map(|(key, old, new)| {
+            if old.is_empty() && new.is_empty() {
+                format!("\n  * {key}")
+            } else {
+                format!("\n  {key}: {old} -> {new}")
+            }
+        })
+        .collect()
+}
+
+/// Render a field value for the edit journal. HeroName is reduced to its
+/// length + encoding class (the diagnostic gets pasted on public forums, and
+/// for alignment bugs the serialized size is what matters — UE FStrings write
+/// ASCII as 1 byte/char and anything else as UTF-16).
+fn fmt_field(name: &str, v: &appearance::FieldValue) -> String {
+    use appearance::FieldValue as FV;
+    match v {
+        FV::Str(s) if name == "HeroName" => {
+            let enc = if s.is_ascii() { "ascii" } else { "non-ascii/utf16" };
+            format!("str({} chars, {enc})", s.chars().count())
+        }
+        FV::Str(s) => format!("{s:?}"),
+        FV::Name(s) | FV::Enum(s) => s.clone(),
+        FV::Int(n) => n.to_string(),
+        FV::Float(f) => format!("{f}"),
+        FV::Bool(b) => b.to_string(),
+        FV::Color(c) => format!("rgba({}, {}, {}, {})", c[0], c[1], c[2], c[3]),
     }
 }
 
@@ -399,6 +493,36 @@ mod tests {
         // The terminal "None" string must still read back its 5 declared bytes.
         let s = &plain[24..29];
         assert_eq!(s, b"None\0", "None terminator intact across the rebuilt pad");
+    }
+
+    #[test]
+    fn journal_fmt_redacts_hero_name_but_not_others() {
+        use appearance::FieldValue as FV;
+        // HeroName gets pasted on public forums — only size/encoding survive.
+        assert_eq!(fmt_field("HeroName", &FV::Str("Kirito".into())), "str(6 chars, ascii)");
+        assert_eq!(fmt_field("HeroName", &FV::Str("キリト".into())), "str(3 chars, non-ascii/utf16)");
+        // Everything else is game data, not personal — keep the real values.
+        assert_eq!(fmt_field("Voice", &FV::Name("Player_M_02".into())), "Player_M_02");
+        assert_eq!(fmt_field("Gender", &FV::Enum("ECharacterSex::Male".into())), "ECharacterSex::Male");
+        assert_eq!(fmt_field("HeadGearID", &FV::Int(3001)), "3001");
+        assert_eq!(fmt_field("Chest", &FV::Float(-0.5)), "-0.5");
+    }
+
+    #[test]
+    fn journal_summary_formats_changes_and_markers() {
+        assert_eq!(
+            edits_summary(&[]),
+            "none recorded (length change came from re-serialization alone)"
+        );
+        let j = vec![
+            ("slot0.Voice".into(), "Player_F".into(), "Player_M_02".into()),
+            ("applied look \"x\" to slot 0 (3 of 40 fields)".into(), String::new(), String::new()),
+        ];
+        let s = edits_summary(&j);
+        assert_eq!(
+            s,
+            "\n  slot0.Voice: Player_F -> Player_M_02\n  * applied look \"x\" to slot 0 (3 of 40 fields)"
+        );
     }
 
     #[test]

@@ -21,6 +21,14 @@ key straight from your running game — no separate tool needed.
 
 ## Changes
 
+**0.1.14** — richer "unrecognized trailer" diagnostic: the copy-pasteable report
+now also includes the save's decrypted length at load time and a journal of what
+was edited since load (each changed field with old → new value, coalesced; preset
+applies and one-click repairs shown as operations). Character names are redacted
+to length + encoding — the sizes are what matter for alignment bugs, and the
+report is meant to be pasted publicly. This is diagnostic-only; nothing about
+saving changed.
+
 **0.1.13** — supports another save-trailer shape reported from the wild (the
 `GVAS` end-of-file magic clipped to its first 1–3 bytes at the aligned end of
 file — two independent reports, a lone `G` and a `GV`), which made saving refuse with

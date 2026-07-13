@@ -478,6 +478,9 @@ impl App {
     fn match_face_to_skin(&mut self) {
         let Some(skin) = self.color("CustomColorSkin") else { return };
         let Some(g) = self.color("CustomColorFaceG") else { return };
+        if let Some(sf) = &mut self.save {
+            sf.note_edit("ran Match face to skin");
+        }
         let d = [skin[0] - g[0], skin[1] - g[1], skin[2] - g[2]];
         if let Some(r) = self.color("CustomColorFaceR") {
             let nr = [
@@ -497,6 +500,7 @@ impl App {
     fn fix_scale(&mut self) {
         let n = self.save.as_ref().map(|s| s.character_count()).unwrap_or(0);
         if let Some(sf) = &mut self.save {
+            sf.note_edit("ran Fix body scale (MeshScale -> 1.0 on all slots)");
             for s in 0..n {
                 let _ = sf.set_appearance(s, "MeshScale", FieldValue::Float(1.0));
             }

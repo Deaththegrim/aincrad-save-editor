@@ -60,6 +60,7 @@ impl Look {
                 n += 1;
             }
         }
+        save.note_edit(format!("applied look {:?} to slot {slot} ({n} of {} fields)", self.name, self.fields.len()));
         n
     }
 
