@@ -21,6 +21,21 @@ key straight from your running game — no separate tool needed.
 
 ## Changes
 
+**0.1.12** — fixes a "**This save has an unrecognized trailer**" refusal when saving a
+length-changing edit (rename, voice, gender) on saves whose trailer is plain zero
+padding with no `GVAS` footer — a format reported from the wild that the re-padder
+didn't know. Also hardens preset loading: applying a Look now validates part ids
+against the character creator's real sets, so a shared or hand-edited preset carrying
+an id the game has no part for (e.g. an NPC hair) can no longer be written into your
+save and break the character. Part-id tables are now a single source shared by the
+pickers and that validation, verified against the game's own data tables.
+
+**0.1.11** — adds a **Change key** control in the top bar so key recovery stays
+reachable after a key is saved (Linux/SteamOS recovery documented).
+
+**0.1.10** — hides the *NPC hairstyles* section while the `hairswap` runtime mod
+isn't reliable yet (one-line re-enable once it is).
+
 **0.1.9** — the **Hair** tab now has an *NPC hairstyles* section (shown when the
 `hairswap` UE4SS mod is installed). NPC-only hairstyles can't be written to a save —
 the game resolves them natively and would crash — so the editor writes your pick to
@@ -89,7 +104,7 @@ from nexusmods.com/settings/api-keys) to actually upload:
 
 ```
 scripts/nexus-upload.sh --file dist/aml-save-editor-windows-x86_64.zip \
-  --file-id <FILE_ID> --version 0.1.9 --name "Aincrad Save Editor 0.1.9" --publish
+  --file-id <FILE_ID> --version 0.1.12 --name "Aincrad Save Editor 0.1.12" --publish
 ```
 
 `--file-id` adds a new version to an existing mod file; `--mod-id <game-scoped-id>`
