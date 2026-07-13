@@ -370,6 +370,14 @@ mod tests {
         realign_eoa(&mut plain, &extra);
         assert_eq!(plain.len(), 450_032);
         assert!(plain.ends_with(&extra));
+        // Second wild diagnostic (0.1.11, Windows): serialized 138085 with a
+        // 6-byte extra of 4 zeros + b"GV" → 138096 after realign (pad of 11).
+        let extra = [0u8, 0, 0, 0, b'G', b'V'];
+        let mut plain = vec![0xCD; 138_085 - extra.len()];
+        plain.extend_from_slice(&extra);
+        realign_eoa(&mut plain, &extra);
+        assert_eq!(plain.len(), 138_096);
+        assert!(plain.ends_with(&extra));
     }
 
     #[test]

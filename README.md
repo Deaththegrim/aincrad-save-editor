@@ -22,7 +22,8 @@ key straight from your running game — no separate tool needed.
 ## Changes
 
 **0.1.13** — supports another save-trailer shape reported from the wild (the
-`GVAS` end-of-file magic clipped to a single byte), which made saving refuse with
+`GVAS` end-of-file magic clipped to its first 1–3 bytes at the aligned end of
+file — two independent reports, a lone `G` and a `GV`), which made saving refuse with
 "**This save has an unrecognized trailer**" on affected saves. Also extends preset
 validation to body sliders: applying a Look now skips body morph weights outside
 the character creator's -1..1 span (an extrapolated morph warps the mesh — e.g. an
