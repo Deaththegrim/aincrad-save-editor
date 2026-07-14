@@ -1290,6 +1290,7 @@ fn body_page(app: &mut App, ui: &mut egui::Ui) {
     }
     card(ui, |ui| {
         ui.label(RichText::new(t.body_hidden).small().color(theme::SUBTEXT));
+        ui.label(RichText::new(t.body_neck_note).small().color(theme::SUBTEXT));
         ui.add_space(6.0);
         egui::Grid::new("body").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
             for (name, lo, hi, cur) in present {

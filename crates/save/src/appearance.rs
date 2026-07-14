@@ -3,6 +3,16 @@
 //! Path: `root.CharacterSaveData[slot].AvatarData.{HeroName,Gender,Voice,
 //! AvatarPartsData.*, AppearanceData.*}`. We expose the editable leaves as a flat
 //! list of [`Field`]s grouped for the UI, and a [`set`] that writes one back.
+//!
+//! Why this module gates so hard: the game validates NOTHING on load
+//! (exe-verified 2026-07-14, echoes-of-aincrad-mods/research/
+//! body-morph-triggers.md). Every field flows raw from the save into its
+//! consumer — body floats into `SetMorphTarget`, MeshScale into
+//! `SetRelativeScale3D`, face/hair ints into asset/morph NAME composition
+//! (`BS_EYB<id>_…`, `SK_CHR_HG%06d`), voice into a Wwise switch, colors into
+//! materials. Our tables here are the ONLY line of defense between an edited
+//! save and a warped or broken character. Colors deliberately stay permissive
+//! (finite-only): out-of-palette values just tint/glow, they can't corrupt.
 
 use crate::SaveError;
 use uesave::{Byte, Float, LinearColor, Properties, Property, Save, StructValue, ValueVec};
@@ -183,10 +193,16 @@ pub fn part_id_valid(field: &str, value: i32) -> bool {
 /// Body-shape float fields and their safe range: `(save field, min, max)`.
 ///
 /// The morph weights run -1.0..=1.0 — the game's own char-creator span (from the
-/// WBP_AvatarCustomize slider blueprints). Each maps to a `BS_BOD_*` morph
-/// target on the costume meshes; outside the span the morph extrapolates and
-/// warps the mesh (a chest far below -1.0 pinches the neck base, since the
-/// `BS_BOD_Chest` deltas reach into it and there is no separate neck morph).
+/// WBP_AvatarCustomize slider blueprints). Exe-verified (2026-07-14, see
+/// echoes-of-aincrad-mods/research/body-morph-triggers.md): the game passes each
+/// save float RAW into `USkeletalMeshComponent::SetMorphTarget("BS_BOD_<field>")`
+/// — no remap, no clamp — so outside the span the morph extrapolates and warps
+/// the mesh (a chest far below -1.0 pinches the neck base, since the
+/// `BS_BOD_Chest` deltas reach into it and there is no separate neck morph or
+/// neck slider anywhere in the game). A weight of exactly 0 REMOVES the morph
+/// (|w| < 1e-5), revealing the base sculpt — identical to the in-game creator
+/// at 0; "neck changed when I set chest to 0" reports are game data, not an
+/// editor bug.
 ///
 /// `MeshScale` is pinned to exactly 1.0: the character creator never exposes
 /// it, and a drifted value resizes every character and mob in the game (the
