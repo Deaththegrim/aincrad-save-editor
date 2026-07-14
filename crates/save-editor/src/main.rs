@@ -13,6 +13,7 @@ mod i18n;
 mod locate;
 mod npchair;
 mod thumbs;
+mod update;
 
 /// Key-scanner shim. The real scanner (reads the running game's memory to recover
 /// the AES key) is compiled in only for the `keyscan` build. The no-keyscan build
@@ -219,6 +220,11 @@ struct App {
     npc_hair: Option<u32>,
     /// A save failure to surface in a copy-pasteable modal (full diagnostic text).
     save_error: Option<String>,
+    /// In-flight background "newer release?" check (yields at most once).
+    update_rx: Option<std::sync::mpsc::Receiver<update::Update>>,
+    /// A newer published release, once the check confirms one — shown as a
+    /// subtle top-bar link.
+    update: Option<update::Update>,
 }
 
 impl App {
@@ -251,6 +257,8 @@ impl App {
             hairswap_cfg,
             npc_hair,
             save_error: None,
+            update_rx: Some(update::spawn_check()),
+            update: None,
         };
         app.scan_looks();
         if app.key.is_none() {
@@ -329,6 +337,22 @@ impl App {
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 Err(_) => self.recovery = None,
+            }
+        }
+    }
+
+    /// Poll the background update check. It sends a message only if a newer
+    /// release exists; either way the receiver disconnects when the thread ends,
+    /// so we stop polling after the first non-empty result.
+    fn poll_update(&mut self) {
+        if let Some(rx) = &self.update_rx {
+            match rx.try_recv() {
+                Ok(u) => {
+                    self.update = Some(u);
+                    self.update_rx = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.update_rx = None,
             }
         }
     }
@@ -634,7 +658,8 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_recovery();
-        if self.recovery.is_some() {
+        self.poll_update();
+        if self.recovery.is_some() || self.update_rx.is_some() {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
         }
         top_bar(self, ui);
@@ -785,6 +810,15 @@ fn top_bar(app: &mut App, ui: &mut egui::Ui) {
             );
             if app.dirty {
                 theme::pill(ui, t.unsaved, theme::PEACH);
+            }
+            // Subtle "newer version available" link (only when the launch check
+            // found one). Clicking opens the releases page in the browser.
+            if let Some(u) = &app.update {
+                ui.hyperlink_to(
+                    RichText::new(format!("⬆ {} v{}", t.update_available, u.version)).color(theme::PEACH),
+                    &u.url,
+                )
+                .on_hover_text(t.update_hint);
             }
             // Language selector.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

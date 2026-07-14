@@ -21,6 +21,17 @@ key straight from your running game — no separate tool needed.
 
 ## Changes
 
+**0.1.16** — the editor now checks GitHub once at launch and shows a subtle
+"⬆ Update available" link in the top bar if a newer release exists (clicking
+opens the downloads page). It's fail-silent — offline or blocked, it just stays
+quiet, and it never blocks anything. This is the editor's only outbound network
+call. Also: the Body page now notes that the chest slider reshapes the neck base
+too — that's the game's own morph (there's no separate neck control), not an
+editor bug, so setting chest to 0 revealing a different neck is expected and
+matches the in-game creator. (Heads-up for anyone on an older build hitting a
+save error when changing voice: length-changing edits on some save trailers were
+fixed back in 0.1.13 — grab this or any 0.1.13+ build.)
+
 **0.1.15** — preset hardening, verified against the game's own data (DataTables +
 UHT header dump): applying a Look now also validates Voice (must be one of the 12
 voices the game ships) and Gender (the enum has exactly Male/Female), and skips

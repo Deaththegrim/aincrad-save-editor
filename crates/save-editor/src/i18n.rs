@@ -113,6 +113,11 @@ pub struct S {
     pub apply: &'static str,
     pub delete: &'static str,
     pub open_to_begin: &'static str,
+    /// Prefix for the top-bar update link, e.g. "Update available" → shown as
+    /// "⬆ Update available v0.1.16".
+    pub update_available: &'static str,
+    /// Hover text on that link.
+    pub update_hint: &'static str,
 }
 
 /// The active language's strings.
@@ -152,6 +157,7 @@ const EN: S = S {
     save_look_as: "Save current look as", save_look: "Save look", saved_looks: "Saved looks",
     no_looks: "No looks saved yet.", apply: "Apply", delete: "Delete",
     open_to_begin: "Open a save to begin.",
+    update_available: "Update available", update_hint: "A newer version of the editor is available — click to open the downloads page.",
 };
 
 const JA: S = S {
@@ -175,6 +181,7 @@ const JA: S = S {
     save_look_as: "現在のルックを保存", save_look: "ルックを保存", saved_looks: "保存済みルック",
     no_looks: "まだルックがありません。", apply: "適用", delete: "削除",
     open_to_begin: "セーブを開いて始めましょう。",
+    update_available: "アップデートあり", update_hint: "エディターの新しいバージョンがあります。クリックでダウンロードページを開きます。",
 };
 
 const FR: S = S {
@@ -198,6 +205,7 @@ const FR: S = S {
     save_look_as: "Enregistrer le look actuel", save_look: "Enregistrer le look", saved_looks: "Looks enregistrés",
     no_looks: "Aucun look enregistré.", apply: "Appliquer", delete: "Supprimer",
     open_to_begin: "Ouvrez une sauvegarde pour commencer.",
+    update_available: "Mise à jour disponible", update_hint: "Une version plus récente de l'éditeur est disponible — cliquez pour ouvrir la page de téléchargement.",
 };
 
 const DE: S = S {
@@ -221,6 +229,7 @@ const DE: S = S {
     save_look_as: "Aktuellen Look speichern", save_look: "Look speichern", saved_looks: "Gespeicherte Looks",
     no_looks: "Noch keine Looks gespeichert.", apply: "Anwenden", delete: "Löschen",
     open_to_begin: "Öffne einen Spielstand, um zu beginnen.",
+    update_available: "Update verfügbar", update_hint: "Eine neuere Version des Editors ist verfügbar — klicken, um die Download-Seite zu öffnen.",
 };
 
 const ES: S = S {
@@ -244,6 +253,7 @@ const ES: S = S {
     save_look_as: "Guardar look actual", save_look: "Guardar look", saved_looks: "Looks guardados",
     no_looks: "Aún no hay looks guardados.", apply: "Aplicar", delete: "Eliminar",
     open_to_begin: "Abre una partida para empezar.",
+    update_available: "Actualización disponible", update_hint: "Hay una versión más reciente del editor — haz clic para abrir la página de descargas.",
 };
 
 const PT: S = S {
@@ -267,6 +277,7 @@ const PT: S = S {
     save_look_as: "Salvar look atual", save_look: "Salvar look", saved_looks: "Looks salvos",
     no_looks: "Nenhum look salvo ainda.", apply: "Aplicar", delete: "Excluir",
     open_to_begin: "Abra um save para começar.",
+    update_available: "Atualização disponível", update_hint: "Há uma versão mais recente do editor — clique para abrir a página de downloads.",
 };
 
 const IT: S = S {
@@ -290,6 +301,7 @@ const IT: S = S {
     save_look_as: "Salva look attuale", save_look: "Salva look", saved_looks: "Look salvati",
     no_looks: "Nessun look salvato.", apply: "Applica", delete: "Elimina",
     open_to_begin: "Apri un salvataggio per iniziare.",
+    update_available: "Aggiornamento disponibile", update_hint: "È disponibile una versione più recente dell'editor — clicca per aprire la pagina dei download.",
 };
 
 const RU: S = S {
@@ -313,6 +325,7 @@ const RU: S = S {
     save_look_as: "Сохранить текущий образ", save_look: "Сохранить образ", saved_looks: "Сохранённые образы",
     no_looks: "Пока нет сохранённых образов.", apply: "Применить", delete: "Удалить",
     open_to_begin: "Откройте сохранение, чтобы начать.",
+    update_available: "Доступно обновление", update_hint: "Доступна более новая версия редактора — нажмите, чтобы открыть страницу загрузки.",
 };
 
 const ZH: S = S {
@@ -336,6 +349,7 @@ const ZH: S = S {
     save_look_as: "保存当前外观", save_look: "保存外观", saved_looks: "已保存外观",
     no_looks: "还没有保存的外观。", apply: "应用", delete: "删除",
     open_to_begin: "打开存档以开始。",
+    update_available: "有可用更新", update_hint: "编辑器有更新版本可用——点击打开下载页面。",
 };
 
 const KO: S = S {
@@ -359,4 +373,5 @@ const KO: S = S {
     save_look_as: "현재 룩 저장", save_look: "룩 저장", saved_looks: "저장된 룩",
     no_looks: "저장된 룩이 없습니다.", apply: "적용", delete: "삭제",
     open_to_begin: "세이브를 열어 시작하세요.",
+    update_available: "업데이트 있음", update_hint: "에디터의 새 버전이 있습니다. 클릭하면 다운로드 페이지가 열립니다.",
 };

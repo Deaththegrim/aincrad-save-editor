@@ -26,3 +26,7 @@ eframe.workspace = true
 egui.workspace = true
 rfd.workspace = true
 image = { workspace = true }
+# Update check: small blocking HTTP client with bundled rustls roots (no system
+# TLS, so the Windows/Nexus build needs nothing extra).
+ureq = "3"
+serde_json = { workspace = true }
