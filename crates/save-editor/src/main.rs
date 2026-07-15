@@ -1001,19 +1001,11 @@ fn identity_page(app: &mut App, ui: &mut egui::Ui) {
                     for (key, label) in [("Male", t.male), ("Female", t.female)] {
                         if ui.selectable_label(gender_short == key, label).clicked() && gender_short != key {
                             app.set("Gender", FieldValue::Enum(format!("{gender_prefix}{key}")));
-                            // Keep the voice consistent: the game only offers
-                            // gender-matching voices, so Player_M_06 <-> Player_F_06.
-                            if let Some(FieldValue::Name(v)) = app.field("Voice").map(|f| f.value.clone()) {
-                                let fixed = if key == "Female" {
-                                    v.replacen("Player_M", "Player_F", 1)
-                                } else {
-                                    v.replacen("Player_F", "Player_M", 1)
-                                };
-                                if fixed != v {
-                                    app.set("Voice", FieldValue::Name(fixed));
-                                }
-                            }
-                            app.note("Gender changed — voice matched to it. Double-check face/hair parts still suit the new body.");
+                            // The voice is deliberately KEPT: voices aren't
+                            // gender-locked (the Wwise switch is keyed by the
+                            // voice name alone), and auto-swapping would clobber
+                            // a deliberate cross-gender pick.
+                            app.note("Gender changed — voice kept (any voice works on any body). Double-check face/hair parts still suit the new body.");
                         }
                     }
                 });
@@ -1022,10 +1014,13 @@ fn identity_page(app: &mut App, ui: &mut egui::Ui) {
             if !voice.is_empty() {
                 ui.label(t.voice);
                 ui.horizontal(|ui| {
-                    // Show the 1-based position ("3 / 6") when recognized; the raw
-                    // id otherwise (so an unexpected value is still visible).
-                    let shown = match voice_index(&voice) {
-                        Some(i) => format!("{} / {}", i + 1, voice_list(&voice).len()),
+                    // Show the gender group + 1-based position ("Male 3 / 6") when
+                    // recognized — a cross-gender pick reads at a glance — or the
+                    // raw id (so an unexpected value is still visible).
+                    let shown = match voice_group_index(&voice) {
+                        Some((female, i)) => {
+                            format!("{} {} / 6", if female { t.female } else { t.male }, i + 1)
+                        }
                         None => voice.clone(),
                     };
                     ui.label(RichText::new(shown).color(theme::SUBTEXT));
@@ -1040,6 +1035,9 @@ fn identity_page(app: &mut App, ui: &mut egui::Ui) {
                         }
                     }
                 });
+                ui.end_row();
+                ui.label("");
+                ui.label(RichText::new(t.voice_any_body).small().italics().color(theme::SUBTEXT));
                 ui.end_row();
             }
         });
@@ -1491,33 +1489,30 @@ fn pak_from_running_game() -> Option<PathBuf> {
 // "Player_F" (no "_01", nothing above "_06"); the old code stepped the number
 // blindly and produced ids the game has no asset for and silently ignores —
 // that was the "voice won't change" bug.
-use aml_save::appearance::{FEMALE_VOICES, MALE_VOICES};
+use aml_save::appearance::{ALL_VOICES, FEMALE_VOICES, MALE_VOICES};
 
-/// Which voice list applies, picked by the voice's own gender prefix.
-fn voice_list(voice: &str) -> &'static [&'static str] {
-    if voice.starts_with("Player_F") {
-        &FEMALE_VOICES
-    } else {
-        &MALE_VOICES
+/// A voice's gender group + 0-based position within it, for display
+/// ("Male 3 / 6"): `(is_female, index)`. None for an unrecognized id.
+fn voice_group_index(voice: &str) -> Option<(bool, usize)> {
+    if let Some(i) = MALE_VOICES.iter().position(|v| *v == voice) {
+        return Some((false, i));
     }
+    FEMALE_VOICES.iter().position(|v| *v == voice).map(|i| (true, i))
 }
 
-/// 1-based position of a voice within its list, for display ("3 / 6").
-fn voice_index(voice: &str) -> Option<usize> {
-    voice_list(voice).iter().position(|v| *v == voice)
-}
-
-/// Step to the previous/next valid voice, clamped to the real set so we never
-/// write an id the game lacks. An unrecognized value (e.g. an invalid id written
-/// by an older build) is repaired to the first valid voice on any step.
+/// Step to the previous/next valid voice across the FULL 12-voice list (male
+/// then female): voices aren't tied to the body's gender — the game keys the
+/// Wwise switch on the voice name alone — so the stepper crosses freely from
+/// Player_M_06 into Player_F. Clamped to the ends so we never write an id the
+/// game lacks; an unrecognized value (e.g. an invalid id written by an older
+/// build) is repaired to the first valid voice on any step.
 fn step_voice(voice: &str, delta: i32) -> Option<String> {
-    let list = voice_list(voice);
-    match list.iter().position(|v| *v == voice) {
+    match ALL_VOICES.iter().position(|v| *v == voice) {
         Some(cur) => {
-            let next = (cur as i32 + delta).clamp(0, list.len() as i32 - 1) as usize;
-            (next != cur).then(|| list[next].to_string())
+            let next = (cur as i32 + delta).clamp(0, ALL_VOICES.len() as i32 - 1) as usize;
+            (next != cur).then(|| ALL_VOICES[next].to_string())
         }
-        None => Some(list[0].to_string()),
+        None => Some(ALL_VOICES[0].to_string()),
     }
 }
 
@@ -1539,10 +1534,12 @@ mod voice_tests {
     use super::*;
 
     #[test]
-    fn max_male_voice_stops_at_top_not_invalid() {
-        // VEX's real save value. Stepping up must NOT produce "Player_M_07".
-        assert_eq!(step_voice("Player_M_06", 1), None);
+    fn stepping_crosses_gender_boundary_not_invalid() {
+        // Voices aren't gender-locked: stepping up from the last male voice
+        // reaches the first female one (never a nonexistent "Player_M_07").
+        assert_eq!(step_voice("Player_M_06", 1).as_deref(), Some("Player_F"));
         assert_eq!(step_voice("Player_M_06", -1).as_deref(), Some("Player_M_05"));
+        assert_eq!(step_voice("Player_F", -1).as_deref(), Some("Player_M_06"));
     }
 
     #[test]
@@ -1554,9 +1551,10 @@ mod voice_tests {
     }
 
     #[test]
-    fn female_list_used_for_female_voice() {
+    fn full_list_clamps_at_both_ends() {
+        assert_eq!(step_voice("Player_F_06", 1), None); // last of all 12
+        assert_eq!(step_voice("Player_F_06", -1).as_deref(), Some("Player_F_05"));
         assert_eq!(step_voice("Player_F", 1).as_deref(), Some("Player_F_02"));
-        assert_eq!(step_voice("Player_F_06", 1), None);
     }
 
     #[test]
@@ -1567,10 +1565,19 @@ mod voice_tests {
     }
 
     #[test]
-    fn index_is_one_based_within_six() {
-        assert_eq!(voice_index("Player_M"), Some(0));
-        assert_eq!(voice_index("Player_M_06"), Some(5));
-        assert_eq!(voice_list("Player_M").len(), 6);
+    fn group_index_labels_each_gender_side() {
+        assert_eq!(voice_group_index("Player_M"), Some((false, 0)));
+        assert_eq!(voice_group_index("Player_M_06"), Some((false, 5)));
+        assert_eq!(voice_group_index("Player_F"), Some((true, 0)));
+        assert_eq!(voice_group_index("Player_F_06"), Some((true, 5)));
+        assert_eq!(voice_group_index("Player_X"), None);
+    }
+
+    #[test]
+    fn all_voices_is_male_then_female_no_drift() {
+        assert_eq!(ALL_VOICES.len(), 12);
+        assert_eq!(&ALL_VOICES[..6], &MALE_VOICES);
+        assert_eq!(&ALL_VOICES[6..], &FEMALE_VOICES);
     }
 }
 

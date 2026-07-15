@@ -242,19 +242,34 @@ pub const MALE_VOICES: [&str; 6] =
 pub const FEMALE_VOICES: [&str; 6] =
     ["Player_F", "Player_F_02", "Player_F_03", "Player_F_04", "Player_F_05", "Player_F_06"];
 
+/// All 12 voices, male then female. A voice is NOT tied to the body's gender:
+/// the game sets the Wwise switch from the voice NAME alone (exe load-path
+/// audit — the creator's gender filter is UI-only), so a female voice on a
+/// male body plays normally. Built from the two lists above so they can't
+/// drift apart.
+pub const ALL_VOICES: [&str; 12] = {
+    let mut all = [""; 12];
+    let mut i = 0;
+    while i < 6 {
+        all[i] = MALE_VOICES[i];
+        all[i + 6] = FEMALE_VOICES[i];
+        i += 1;
+    }
+    all
+};
+
 /// The exact values of the game's `ECharacterSex` enum (from the UHT header
 /// dump: `Male = 0`, `Female = 1`, nothing else).
 pub const GENDERS: [&str; 2] = ["ECharacterSex::Male", "ECharacterSex::Female"];
 
 /// Whether `value` is a game-valid value for an identity field. Voice must be
-/// one of the 12 shipped voices and Gender one of the two real enum values —
-/// anything else has no game asset/meaning behind it. Fields without a
-/// known-values table are always valid, mirroring [`part_id_valid`].
+/// one of the 12 shipped voices (either gender — see [`ALL_VOICES`]) and
+/// Gender one of the two real enum values — anything else has no game
+/// asset/meaning behind it. Fields without a known-values table are always
+/// valid, mirroring [`part_id_valid`].
 pub fn identity_valid(field: &str, value: &FieldValue) -> bool {
     match (field, value) {
-        ("Voice", FieldValue::Name(v)) => {
-            MALE_VOICES.contains(&v.as_str()) || FEMALE_VOICES.contains(&v.as_str())
-        }
+        ("Voice", FieldValue::Name(v)) => ALL_VOICES.contains(&v.as_str()),
         ("Gender", FieldValue::Enum(v)) => GENDERS.contains(&v.as_str()),
         _ => true,
     }
