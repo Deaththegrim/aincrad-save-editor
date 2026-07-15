@@ -62,6 +62,11 @@ fn main() -> eframe::Result {
         "Aincrad Save Editor",
         opts,
         Box::new(|cc| {
+            // Pin dark mode BEFORE styling: eframe defaults to following the OS
+            // theme, and set_visuals only writes the ACTIVE theme's style — on a
+            // light-mode Windows the app flipped to stock egui light and our
+            // palette never applied.
+            cc.egui_ctx.set_theme(egui::Theme::Dark);
             cc.egui_ctx.set_visuals(theme::visuals());
             install_cjk_font(&cc.egui_ctx);
             Ok(Box::new(App::new()))
