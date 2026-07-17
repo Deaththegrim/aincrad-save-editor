@@ -10,6 +10,7 @@
 
 pub mod appearance;
 pub mod crypto;
+pub mod mode;
 pub mod preset;
 
 use std::path::{Path, PathBuf};
@@ -144,7 +145,28 @@ impl SaveFile {
             .unwrap_or_else(|| "?".into());
         appearance::set(&mut self.save, slot, name, value.clone())?;
         let new = fmt_field(name, &value);
-        let key = format!("slot{slot}.{name}");
+        self.journal_set(format!("slot{slot}.{name}"), old, new);
+        Ok(())
+    }
+
+    /// Read the character-creation permadeath flag (`bDeathGameMode`) for a slot.
+    pub fn death_game_mode(&self, slot: usize) -> Result<bool, SaveError> {
+        mode::death_game(&self.save, slot)
+    }
+
+    /// Set the permadeath flag for a slot. Journaled like appearance edits.
+    pub fn set_death_game_mode(&mut self, slot: usize, value: bool) -> Result<(), SaveError> {
+        let old = mode::death_game(&self.save, slot)
+            .map(|b| b.to_string())
+            .unwrap_or_else(|_| "?".into());
+        mode::set_death_game(&mut self.save, slot, value)?;
+        self.journal_set(format!("slot{slot}.bDeathGameMode"), old, value.to_string());
+        Ok(())
+    }
+
+    /// Record a field change in the edit journal, coalescing repeated edits to
+    /// the same key and dropping an entry that returns to its original value.
+    fn journal_set(&mut self, key: String, old: String, new: String) {
         if let Some(i) = self.journal.iter().position(|(k, _, _)| *k == key) {
             if self.journal[i].1 == new {
                 // Edited back to the original value — not a change anymore.
@@ -155,7 +177,6 @@ impl SaveFile {
         } else if old != new {
             self.journal.push((key, old, new));
         }
-        Ok(())
     }
 
     /// Append a free-form marker to the edit journal (e.g. "applied look X"),
@@ -768,6 +789,45 @@ mod tests {
                 _ => {}
             }
         }
+    }
+
+    #[test]
+    fn death_game_flag_reads_flips_and_roundtrips() {
+        let Some((key, sav)) = local() else { return };
+        let out = std::env::temp_dir().join("aml-deathgame-roundtrip.sav");
+        let mut file = SaveFile::load(&sav, key.trim()).expect("load");
+        let orig = file.death_game_mode(0).expect("real save must expose bDeathGameMode");
+        // Flip, journal, write through the REAL write() path, reload, verify.
+        file.set_death_game_mode(0, !orig).expect("set flag");
+        assert_eq!(file.death_game_mode(0).unwrap(), !orig, "flip must read back");
+        assert!(
+            file.edits_summary().contains("slot0.bDeathGameMode"),
+            "flag edits must be journaled for the trailer diagnostic"
+        );
+        file.write(&out).expect("write flipped save");
+        let reloaded = SaveFile::load(&out, key.trim()).expect("reload");
+        assert_eq!(reloaded.death_game_mode(0).unwrap(), !orig, "flip must survive a save/load");
+        // Flip back = no longer an edit (journal coalescing) and byte-identical tree.
+        file.set_death_game_mode(0, orig).unwrap();
+        assert!(
+            !file.edits_summary().contains("bDeathGameMode"),
+            "restoring the original value must drop the journal entry"
+        );
+        let _ = std::fs::remove_file(&out);
+    }
+
+    #[test]
+    fn look_never_captures_death_game_mode() {
+        // The flag lives on the slot struct, outside AvatarData — a captured
+        // look must never include it (a shared look changing someone's
+        // permadeath ruling would be a nasty surprise). Pin the boundary.
+        let Some((key, sav)) = local() else { return };
+        let file = SaveFile::load(&sav, key.trim()).expect("load");
+        let look = crate::preset::Look::capture(&file, 0, "boundary").unwrap();
+        assert!(
+            look.fields.iter().all(|(name, _)| name != "bDeathGameMode"),
+            "a look must never carry bDeathGameMode"
+        );
     }
 
     #[test]

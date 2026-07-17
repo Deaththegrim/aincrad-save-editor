@@ -169,7 +169,7 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "aml-core"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "serde",
  "thiserror 2.0.18",
@@ -177,7 +177,7 @@ dependencies = [
 
 [[package]]
 name = "aml-host"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "aml-core",
  "dirs",
@@ -190,7 +190,7 @@ dependencies = [
 
 [[package]]
 name = "aml-keyscan"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "aes",
  "hex",
@@ -200,7 +200,7 @@ dependencies = [
 
 [[package]]
 name = "aml-save"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "aes",
  "ecb",
@@ -213,7 +213,7 @@ dependencies = [
 
 [[package]]
 name = "aml-save-editor"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "aml-host",
  "aml-keyscan",
@@ -229,7 +229,7 @@ dependencies = [
 
 [[package]]
 name = "aml-ui"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "egui",
 ]

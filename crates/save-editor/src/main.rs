@@ -1018,26 +1018,25 @@ fn identity_page(app: &mut App, ui: &mut egui::Ui) {
             }
             if !voice.is_empty() {
                 ui.label(t.voice);
-                ui.horizontal(|ui| {
-                    // Show the gender group + 1-based position ("Male 3 / 6") when
-                    // recognized — a cross-gender pick reads at a glance — or the
-                    // raw id (so an unexpected value is still visible).
-                    let shown = match voice_group_index(&voice) {
-                        Some((female, i)) => {
-                            format!("{} {} / 6", if female { t.female } else { t.male }, i + 1)
-                        }
-                        None => voice.clone(),
-                    };
-                    ui.label(RichText::new(shown).color(theme::SUBTEXT));
-                    if ui.small_button("◀").clicked() {
-                        if let Some(v) = step_voice(&voice, -1) {
-                            app.set("Voice", FieldValue::Name(v));
-                        }
-                    }
-                    if ui.small_button("▶").clicked() {
-                        if let Some(v) = step_voice(&voice, 1) {
-                            app.set("Voice", FieldValue::Name(v));
-                        }
+                // All 12 voices visible at once — a male row and a female row.
+                // The old ◀/▶ stepper crossed genders correctly but only ever
+                // SHOWED the current one ("Male 3 / 6"), so nobody discovered
+                // the other six voices past the end of their row.
+                ui.vertical(|ui| {
+                    for (group, list) in [(t.male, &MALE_VOICES), (t.female, &FEMALE_VOICES)] {
+                        ui.horizontal(|ui| {
+                            ui.add_sized(
+                                [52.0, 18.0],
+                                egui::Label::new(RichText::new(group).small().color(theme::SUBTEXT)),
+                            );
+                            for (i, v) in list.iter().enumerate() {
+                                if ui.selectable_label(voice == *v, format!("{}", i + 1)).clicked()
+                                    && voice != *v
+                                {
+                                    app.set("Voice", FieldValue::Name(v.to_string()));
+                                }
+                            }
+                        });
                     }
                 });
                 ui.end_row();
@@ -1047,6 +1046,27 @@ fn identity_page(app: &mut App, ui: &mut egui::Ui) {
             }
         });
     });
+
+    // Slot-level game mode: the character-creation permadeath flag. Lives on
+    // the slot struct outside AvatarData (so looks can never carry it) and is
+    // read live from the save tree, so it follows the character selector.
+    let death_game = app.save.as_ref().and_then(|s| s.death_game_mode(app.slot).ok());
+    if let Some(on) = death_game {
+        ui.add_space(10.0);
+        ui.heading(t.mode_title);
+        ui.add_space(4.0);
+        card(ui, |ui| {
+            let mut b = on;
+            if ui.checkbox(&mut b, t.death_game).changed() {
+                if let Some(sf) = &mut app.save {
+                    if sf.set_death_game_mode(app.slot, b).is_ok() {
+                        app.dirty = true;
+                    }
+                }
+            }
+            ui.label(RichText::new(t.death_game_note).small().color(theme::SUBTEXT));
+        });
+    }
 }
 
 /// The **NPC side**: hairstyles the game defines in `DT_HeadGearParts` (the
@@ -1490,36 +1510,10 @@ fn pak_from_running_game() -> Option<PathBuf> {
 }
 
 // The valid character voices live in `aml_save::appearance` — single source
-// for this stepper AND preset validation. Voice 1 is the BARE "Player_M" /
-// "Player_F" (no "_01", nothing above "_06"); the old code stepped the number
-// blindly and produced ids the game has no asset for and silently ignores —
-// that was the "voice won't change" bug.
-use aml_save::appearance::{ALL_VOICES, FEMALE_VOICES, MALE_VOICES};
-
-/// A voice's gender group + 0-based position within it, for display
-/// ("Male 3 / 6"): `(is_female, index)`. None for an unrecognized id.
-fn voice_group_index(voice: &str) -> Option<(bool, usize)> {
-    if let Some(i) = MALE_VOICES.iter().position(|v| *v == voice) {
-        return Some((false, i));
-    }
-    FEMALE_VOICES.iter().position(|v| *v == voice).map(|i| (true, i))
-}
-
-/// Step to the previous/next valid voice across the FULL 12-voice list (male
-/// then female): voices aren't tied to the body's gender — the game keys the
-/// Wwise switch on the voice name alone — so the stepper crosses freely from
-/// Player_M_06 into Player_F. Clamped to the ends so we never write an id the
-/// game lacks; an unrecognized value (e.g. an invalid id written by an older
-/// build) is repaired to the first valid voice on any step.
-fn step_voice(voice: &str, delta: i32) -> Option<String> {
-    match ALL_VOICES.iter().position(|v| *v == voice) {
-        Some(cur) => {
-            let next = (cur as i32 + delta).clamp(0, ALL_VOICES.len() as i32 - 1) as usize;
-            (next != cur).then(|| ALL_VOICES[next].to_string())
-        }
-        None => Some(ALL_VOICES[0].to_string()),
-    }
-}
+// for the voice picker AND preset validation. Voice 1 is the BARE "Player_M" /
+// "Player_F" (no "_01", nothing above "_06") — the picker only ever offers
+// these exact names, so it can't write an id the game has no audio for.
+use aml_save::appearance::{FEMALE_VOICES, MALE_VOICES};
 
 /// "CustomColorHairR" -> "Hair R", "MeshScale" -> "Mesh Scale".
 fn pretty(name: &str) -> String {
@@ -1539,50 +1533,19 @@ mod voice_tests {
     use super::*;
 
     #[test]
-    fn stepping_crosses_gender_boundary_not_invalid() {
-        // Voices aren't gender-locked: stepping up from the last male voice
-        // reaches the first female one (never a nonexistent "Player_M_07").
-        assert_eq!(step_voice("Player_M_06", 1).as_deref(), Some("Player_F"));
-        assert_eq!(step_voice("Player_M_06", -1).as_deref(), Some("Player_M_05"));
-        assert_eq!(step_voice("Player_F", -1).as_deref(), Some("Player_M_06"));
-    }
-
-    #[test]
-    fn voice_two_steps_down_to_bare_first_not_underscore_01() {
-        // Voice 1 is the bare id; there is no "Player_M_01".
-        assert_eq!(step_voice("Player_M_02", -1).as_deref(), Some("Player_M"));
-        assert_eq!(step_voice("Player_M", -1), None); // already first
-        assert_eq!(step_voice("Player_M", 1).as_deref(), Some("Player_M_02"));
-    }
-
-    #[test]
-    fn full_list_clamps_at_both_ends() {
-        assert_eq!(step_voice("Player_F_06", 1), None); // last of all 12
-        assert_eq!(step_voice("Player_F_06", -1).as_deref(), Some("Player_F_05"));
-        assert_eq!(step_voice("Player_F", 1).as_deref(), Some("Player_F_02"));
-    }
-
-    #[test]
-    fn invalid_id_repairs_to_first_valid() {
-        // An id an older buggy build might have written.
-        assert_eq!(step_voice("Player_M_07", -1).as_deref(), Some("Player_M"));
-        assert_eq!(step_voice("Player_M_01", 1).as_deref(), Some("Player_M"));
-    }
-
-    #[test]
-    fn group_index_labels_each_gender_side() {
-        assert_eq!(voice_group_index("Player_M"), Some((false, 0)));
-        assert_eq!(voice_group_index("Player_M_06"), Some((false, 5)));
-        assert_eq!(voice_group_index("Player_F"), Some((true, 0)));
-        assert_eq!(voice_group_index("Player_F_06"), Some((true, 5)));
-        assert_eq!(voice_group_index("Player_X"), None);
-    }
-
-    #[test]
-    fn all_voices_is_male_then_female_no_drift() {
-        assert_eq!(ALL_VOICES.len(), 12);
-        assert_eq!(&ALL_VOICES[..6], &MALE_VOICES);
-        assert_eq!(&ALL_VOICES[6..], &FEMALE_VOICES);
+    fn picker_offers_all_twelve_voices_no_gaps() {
+        // The chip rows must expose every shipped voice (6 male + 6 female) and
+        // only real ids: voice 1 is the BARE name (no "_01"), nothing above _06.
+        // Every chip writes a name from these lists verbatim, so the picker
+        // can't produce an id the game has no audio asset for.
+        assert_eq!(MALE_VOICES.len(), 6);
+        assert_eq!(FEMALE_VOICES.len(), 6);
+        assert_eq!(MALE_VOICES[0], "Player_M");
+        assert_eq!(FEMALE_VOICES[0], "Player_F");
+        assert!(MALE_VOICES.iter().all(|v| !v.ends_with("_01")));
+        assert!(FEMALE_VOICES.iter().all(|v| !v.ends_with("_01")));
+        // The two rows never overlap (a chip selects exactly one save value).
+        assert!(MALE_VOICES.iter().all(|v| !FEMALE_VOICES.contains(v)));
     }
 }
 

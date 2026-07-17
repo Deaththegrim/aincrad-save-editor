@@ -21,6 +21,17 @@ key straight from your running game — no separate tool needed.
 
 ## Changes
 
+**0.1.17** — two additions on the Identity page. **Death game (permadeath) toggle**:
+a new *Game mode* section shows the character-creation permadeath flag
+(`bDeathGameMode`) for the selected character, so you can turn it off (rescue a
+death-game character) or on. It's the same per-character switch the game itself
+writes; a change applies the next time the game loads the save. It's outside the
+appearance data on purpose — saved Looks never capture or apply it. **All 12
+voices are now visible**: the voice control is two rows of selectable chips
+(Male 1–6, Female 1–6) instead of the old ◀/▶ stepper, which crossed genders
+correctly but only ever displayed the current voice — nobody discovered the
+other gender's six past the end of the row.
+
 **0.1.16** — the editor now checks GitHub once at launch and shows a subtle
 "⬆ Update available" link in the top bar if a newer release exists (clicking
 opens the downloads page). It's fail-silent — offline or blocked, it just stays

@@ -58,11 +58,33 @@ pub(crate) fn slots(save: &Save) -> Option<&Vec<StructValue>> {
     }
 }
 
-fn find<'a>(props: &'a Properties, name: &str) -> Option<&'a Property> {
+pub(crate) fn find<'a>(props: &'a Properties, name: &str) -> Option<&'a Property> {
     props.0.iter().find(|(k, _)| k.1 == name).map(|(_, v)| v)
 }
-fn find_mut<'a>(props: &'a mut Properties, name: &str) -> Option<&'a mut Property> {
+pub(crate) fn find_mut<'a>(props: &'a mut Properties, name: &str) -> Option<&'a mut Property> {
     props.0.iter_mut().find(|(k, _)| k.1 == name).map(|(_, v)| v)
+}
+
+/// Borrow the property list of one `CharacterSaveData[slot]` struct (the whole
+/// per-character save record — `AvatarData` and the slot-level mode flags live
+/// here). Shared by the appearance walkers and `mode`.
+pub(crate) fn slot_props(save: &Save, slot: usize) -> Result<&Properties, SaveError> {
+    let s = slots(save).ok_or_else(|| SaveError::Parse("no CharacterSaveData".into()))?;
+    match s.get(slot) {
+        Some(StructValue::Struct(props)) => Ok(props),
+        _ => Err(SaveError::NoSlot(slot)),
+    }
+}
+
+pub(crate) fn slot_props_mut(save: &mut Save, slot: usize) -> Result<&mut Properties, SaveError> {
+    let s = match find_mut(&mut save.root.properties, "CharacterSaveData") {
+        Some(Property::Array(ValueVec::Struct(v))) => v,
+        _ => return Err(SaveError::Parse("no CharacterSaveData".into())),
+    };
+    match s.get_mut(slot) {
+        Some(StructValue::Struct(props)) => Ok(props),
+        _ => Err(SaveError::NoSlot(slot)),
+    }
 }
 fn inner(p: &Property) -> Option<&Properties> {
     match p {
@@ -79,21 +101,12 @@ fn inner_mut(p: &mut Property) -> Option<&mut Properties> {
 
 /// Borrow the `AvatarData` properties of a slot.
 fn avatar(save: &Save, slot: usize) -> Result<&Properties, SaveError> {
-    let s = slots(save).ok_or_else(|| SaveError::Parse("no CharacterSaveData".into()))?;
-    let StructValue::Struct(props) = s.get(slot).ok_or(SaveError::NoSlot(slot))? else {
-        return Err(SaveError::NoSlot(slot));
-    };
+    let props = slot_props(save, slot)?;
     find(props, "AvatarData").and_then(inner).ok_or_else(|| SaveError::NoField("AvatarData".into()))
 }
 
 fn avatar_mut(save: &mut Save, slot: usize) -> Result<&mut Properties, SaveError> {
-    let s = match find_mut(&mut save.root.properties, "CharacterSaveData") {
-        Some(Property::Array(ValueVec::Struct(v))) => v,
-        _ => return Err(SaveError::Parse("no CharacterSaveData".into())),
-    };
-    let StructValue::Struct(props) = s.get_mut(slot).ok_or(SaveError::NoSlot(slot))? else {
-        return Err(SaveError::NoSlot(slot));
-    };
+    let props = slot_props_mut(save, slot)?;
     find_mut(props, "AvatarData")
         .and_then(inner_mut)
         .ok_or_else(|| SaveError::NoField("AvatarData".into()))
