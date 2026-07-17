@@ -248,8 +248,8 @@ pub fn float_valid(field: &str, value: f32) -> bool {
 /// 6 each, verified against `DT_AvatarCustomize_Voice` and the
 /// `Switch_Avatar_Voice_*` Wwise assets. Voice 1 is the BARE name (there is no
 /// "_01"), and nothing exists above "_06" — an id outside these sets has no
-/// audio asset. Single source for the UI stepper AND preset validation, like
-/// [`PART_IDS`].
+/// audio asset. Single source for the UI voice chips AND preset validation,
+/// like [`PART_IDS`].
 pub const MALE_VOICES: [&str; 6] =
     ["Player_M", "Player_M_02", "Player_M_03", "Player_M_04", "Player_M_05", "Player_M_06"];
 pub const FEMALE_VOICES: [&str; 6] =

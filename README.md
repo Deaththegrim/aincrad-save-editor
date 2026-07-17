@@ -110,9 +110,11 @@ feature off), so it ships with **zero** `OpenProcess`/`ReadProcessMemory` import
 
 ## Download
 
-Grab the latest Windows build from [Releases](https://github.com/Deaththegrim/aincrad-save-editor/releases).
-Unzip anywhere and run `aml-save-editor.exe` — it's portable (everything it writes
-stays in `aml-data/` next to the exe; nothing touches system folders).
+Grab the latest build from [Releases](https://github.com/Deaththegrim/aincrad-save-editor/releases)
+— Windows and Linux zips are published for every version. Unzip anywhere and run
+`aml-save-editor.exe` (Windows) or `aml-save-editor` (Linux) — it's portable
+(everything it writes stays in `aml-data/` next to the binary; nothing touches
+system folders).
 
 ## Using it
 
