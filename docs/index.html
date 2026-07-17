@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aincrad Save Editor — Echoes of Aincrad</title>
+<!-- Theme is the suite-wide landing.css served by the data-explorer repo — one
+     source for the whole EoA modding suite; don't inline a copy here. -->
+<link rel="stylesheet" href="https://deaththegrim.github.io/echoes-of-aincrad-mods/landing.css">
+</head>
+<body>
+<header>
+  <h1>⚔ Aincrad Save Editor</h1>
+  <span class="sub">for Echoes of Aincrad · all-in-one build</span>
+  <span style="flex:1"></span>
+  <span class="sub"><a href="https://github.com/Deaththegrim/aincrad-save-editor">repo</a> · <a href="https://github.com/Deaththegrim/aincrad-save-editor/releases">releases</a></span>
+</header>
+
+<div class="landing">
+  <div class="hero">
+    <p class="tagline">A friendly visual editor for your <strong>Echoes of Aincrad</strong>
+    character — pick a face, hair, and eyes by sight from the real in-game thumbnails.
+    It edits a working copy; your live save is only touched on confirm, and always
+    with a timestamped backup first.</p>
+    <div class="btnrow">
+      <a class="btn primary" href="https://github.com/Deaththegrim/aincrad-save-editor/releases/latest">⬇ Download the latest release</a>
+      <a class="btn" href="https://github.com/Deaththegrim/aincrad-save-editor">Source on GitHub</a>
+      <a class="btn" href="https://github.com/Deaththegrim/aincrad-save-editor-noscan">No-scan build</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <ul>
+      <li><strong>Visual pickers</strong> — face, hair, eyes, and extras chosen from the game's own thumbnails, not by number.</li>
+      <li><strong>Death game (permadeath) toggle</strong> — turn the character-creation permadeath flag off (rescue a death-game character) or on, per character.</li>
+      <li><strong>All 12 voices</strong> — male and female rows, usable on any body.</li>
+      <li><strong>Looks</strong> — save an appearance as a named preset and re-apply it; every applied value is validated against the game's real data tables.</li>
+      <li><strong>Safe by construction</strong> — working-copy edits, timestamped backups, and gates that refuse values the game would break on.</li>
+      <li><strong>Built-in key recovery</strong> — reads your own pak AES key from your running game; nothing is shipped or uploaded.</li>
+      <li>UI in 10 languages.</li>
+    </ul>
+  </div>
+
+  <div class="note">
+    <strong>Antivirus flagged it?</strong> Key recovery reads the running game's memory
+    (to recover <em>your own</em> key), which trips the <code>T1055</code> heuristic — a
+    false positive (clean VirusTotal). Grab the
+    <a href="https://github.com/Deaththegrim/aincrad-save-editor-noscan">no-scan build</a>
+    instead: the exact same editor with no memory reading at all.
+  </div>
+
+  <div class="suite">
+    <b>EoA modding suite:</b>
+    <a href="https://github.com/Deaththegrim/aincrad-mod-loader">Mod Loader</a>
+    <span>Save Editor</span>
+    <a href="https://github.com/Deaththegrim/aincrad-save-editor-noscan">Save Editor (no-scan)</a>
+    <a href="https://github.com/Deaththegrim/eoa-coop">Co-op Restoration</a>
+    <a href="https://github.com/Deaththegrim/echoes-of-aincrad-mods">UE4SS Mods</a>
+    <a href="https://deaththegrim.github.io/echoes-of-aincrad-mods/">Game Data Explorer</a>
+  </div>
+</div>
+
+<footer>Edits your own local save from your own game. The game's AES key is never shipped — the editor reads yours from your own installation.</footer>
+</body>
+</html>
