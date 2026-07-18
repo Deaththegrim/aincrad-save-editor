@@ -14,6 +14,7 @@ mod locate;
 mod npchair;
 mod thumbs;
 mod update;
+mod voice_preview;
 
 /// Key-scanner shim. The real scanner (reads the running game's memory to recover
 /// the AES key) is compiled in only for the `keyscan` build. The no-keyscan build
@@ -230,6 +231,9 @@ struct App {
     /// A newer published release, once the check confirms one — shown as a
     /// subtle top-bar link.
     update: Option<update::Update>,
+    /// Plays the creator's voice sample lines from the bundled clips; the whole
+    /// preview UI hides itself when the clips payload is absent.
+    preview: voice_preview::VoicePreview,
 }
 
 impl App {
@@ -264,6 +268,15 @@ impl App {
             save_error: None,
             update_rx: Some(update::spawn_check()),
             update: None,
+            preview: voice_preview::VoicePreview::new(
+                locate::voices_dir(),
+                // Audio defaults to the UI language when it's one the game dubs.
+                if lang == Lang::Ja {
+                    voice_preview::AudioLang::Jp
+                } else {
+                    voice_preview::AudioLang::En
+                },
+            ),
         };
         app.scan_looks();
         if app.key.is_none() {
@@ -1034,6 +1047,28 @@ fn identity_page(app: &mut App, ui: &mut egui::Ui) {
                                     && voice != *v
                                 {
                                     app.set("Voice", FieldValue::Name(v.to_string()));
+                                    // Mirror the in-game creator: picking a voice
+                                    // speaks one of its sample lines right away.
+                                    app.preview.play(v);
+                                }
+                            }
+                        });
+                    }
+                    if app.preview.any() {
+                        ui.horizontal(|ui| {
+                            if ui.button("▶").on_hover_text(t.voice_preview).clicked() {
+                                app.preview.play(&voice);
+                            }
+                            // Audio-language toggle, only when both dubs shipped.
+                            use voice_preview::AudioLang;
+                            if AudioLang::ALL.iter().all(|l| app.preview.lang_available(*l)) {
+                                for l in AudioLang::ALL {
+                                    if ui
+                                        .selectable_label(app.preview.lang == l, RichText::new(l.label()).small())
+                                        .clicked()
+                                    {
+                                        app.preview.lang = l;
+                                    }
                                 }
                             }
                         });

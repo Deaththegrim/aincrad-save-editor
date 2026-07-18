@@ -92,6 +92,11 @@ pub fn thumbs_dir() -> PathBuf {
     data_root().join("thumbnails")
 }
 
+/// Where the bundled voice-preview clips live (`voices/<lang>/<Voice>_<n>.ogg`).
+pub fn voices_dir() -> PathBuf {
+    data_root().join("voices")
+}
+
 /// Where saved appearance presets ("looks") live.
 pub fn looks_dir() -> PathBuf {
     data_root().join("looks")

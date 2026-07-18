@@ -21,6 +21,16 @@ key straight from your running game — no separate tool needed.
 
 ## Changes
 
+**0.1.18** — **voice previews**: picking a voice now plays one of the character
+creator's own sample lines for it, and a ▶ button under the chips replays the
+current voice (each press cycles through its six creator lines). An EN/JP toggle
+switches between the game's two audio languages — the default follows the
+editor's UI language. The clips are the exact ones the in-game creator plays
+(extracted from the `Play_VOFX_AvatarCustomize` Wwise event; see
+`scripts/extract-voices.py`) and ship in the bundle under
+`aml-data/save-editor/voices/`. No audio device, or a bundle without the clips?
+The preview UI simply hides — nothing else changes.
+
 **0.1.17** — two additions on the Identity page. **Death game (permadeath) toggle**:
 a new *Game mode* section shows the character-creation permadeath flag
 (`bDeathGameMode`) for the selected character, so you can turn it off (rescue a

@@ -30,3 +30,4 @@ image = { workspace = true }
 # TLS, so the Windows/Nexus build needs nothing extra).
 ureq = "3"
 serde_json = { workspace = true }
+rodio = { workspace = true }
