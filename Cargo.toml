@@ -11,7 +11,7 @@ members = [
 
 [workspace.package]
 edition = "2021"
-version = "0.1.18"
+version = "0.1.19"
 license = "MIT"
 authors = ["junkie"]
 repository = "https://github.com/Deaththegrim/aincrad-save-editor"
@@ -30,6 +30,8 @@ rfd = "0.15"
 image = { version = "0.25", default-features = false, features = ["png"] }
 # Voice preview: plays the bundled ogg clips of the creator's voice sample lines.
 rodio = { version = "0.22", default-features = false, features = ["playback", "symphonia-ogg", "symphonia-vorbis"] }
+# Backup list: format the backups' unix timestamps as local date-times.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # Save decrypt/parse + key recovery
 uesave = "0.7"

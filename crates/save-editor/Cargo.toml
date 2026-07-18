@@ -31,3 +31,7 @@ image = { workspace = true }
 ureq = "3"
 serde_json = { workspace = true }
 rodio = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

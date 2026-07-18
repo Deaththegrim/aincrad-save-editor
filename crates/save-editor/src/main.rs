@@ -45,7 +45,7 @@ use aml_save::SaveFile;
 use aml_ui::theme;
 use egui::RichText;
 use i18n::{Lang, S};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn main() -> eframe::Result {
     let opts = eframe::NativeOptions {
@@ -133,6 +133,7 @@ enum Category {
     Hair,
     Body,
     Looks,
+    Backups,
 }
 const CATEGORY_ORDER: &[Category] = &[
     Category::Identity,
@@ -140,6 +141,7 @@ const CATEGORY_ORDER: &[Category] = &[
     Category::Hair,
     Category::Body,
     Category::Looks,
+    Category::Backups,
 ];
 
 fn cat_label(t: &S, cat: Category) -> &'static str {
@@ -149,7 +151,52 @@ fn cat_label(t: &S, cat: Category) -> &'static str {
         Category::Hair => t.cat_hair,
         Category::Body => t.cat_body,
         Category::Looks => t.cat_looks,
+        Category::Backups => t.cat_backups,
     }
+}
+
+/// One row on the Backups page.
+#[derive(Clone)]
+struct BackupEntry {
+    path: PathBuf,
+    /// Unix seconds, from the `.{ts}.bak` filename (mtime fallback).
+    ts: i64,
+    /// Backup of the live save (true) or of the working copy (false).
+    live: bool,
+    size: u64,
+}
+
+/// The `<name>.{unix-seconds}.bak` timestamp, if the name has one.
+fn backup_ts_from_name(name: &str) -> Option<i64> {
+    let stem = name.strip_suffix(".bak")?;
+    stem.rsplit('.').next()?.parse().ok()
+}
+
+/// All `.bak` files in one backups folder, tagged with their source.
+fn scan_backup_dir(dir: &Path, live: bool) -> Vec<BackupEntry> {
+    let mut v = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let path = e.path();
+            let Some(name) = path.file_name().and_then(|s| s.to_str()) else { continue };
+            if !name.ends_with(".bak") {
+                continue;
+            }
+            let meta = e.metadata().ok();
+            let ts = backup_ts_from_name(name)
+                .or_else(|| {
+                    meta.as_ref()?
+                        .modified()
+                        .ok()?
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .ok()
+                        .map(|d| d.as_secs() as i64)
+                })
+                .unwrap_or(0);
+            v.push(BackupEntry { path, ts, live, size: meta.map(|m| m.len()).unwrap_or(0) });
+        }
+    }
+    v
 }
 
 /// The translated label for a thumbnail picker (matched by its save field).
@@ -234,6 +281,8 @@ struct App {
     /// Plays the creator's voice sample lines from the bundled clips; the whole
     /// preview UI hides itself when the clips payload is absent.
     preview: voice_preview::VoicePreview,
+    /// Backups page rows, rescanned when the page is opened or a backup is made.
+    backups: Vec<BackupEntry>,
 }
 
 impl App {
@@ -277,8 +326,10 @@ impl App {
                     voice_preview::AudioLang::En
                 },
             ),
+            backups: Vec::new(),
         };
         app.scan_looks();
+        app.scan_backups();
         if app.key.is_none() {
             app.status = "Enter your Echoes of Aincrad pak AES key to begin.".into();
         } else if app.live_path.is_some() {
@@ -639,6 +690,58 @@ impl App {
                 }
             }
         }
+        self.scan_backups();
+    }
+
+    /// Refresh the Backups page rows: the working copy's backups folder plus the
+    /// live save's (next to the game's save file), newest first.
+    fn scan_backups(&mut self) {
+        let mut v = scan_backup_dir(&locate::work_backups_dir(), false);
+        if let Some(live) = &self.live_path {
+            if let Some(dir) = live.parent() {
+                v.extend(scan_backup_dir(&dir.join("backups"), true));
+            }
+        }
+        v.sort_by_key(|b| std::cmp::Reverse(b.ts));
+        self.backups = v;
+    }
+
+    /// Load a backup into the working copy (backing the current work copy up
+    /// first, so nothing is ever lost). The live save stays untouched until the
+    /// user explicitly applies.
+    fn load_backup(&mut self, path: &Path) {
+        let Some(key) = self.key.clone() else { return };
+        if let Err(e) = aml_save::backup(&self.work_path) {
+            self.note(format!("Aborted — could not back up the current working copy: {e}"));
+            return;
+        }
+        if let Some(parent) = self.work_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Err(e) = std::fs::copy(path, &self.work_path) {
+            self.note(format!("Could not copy the backup into the working copy: {e}"));
+            return;
+        }
+        let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("?").to_string();
+        match SaveFile::load(&self.work_path, &key) {
+            Ok(sf) => {
+                let n = sf.character_count();
+                self.slot = self.slot.min(n.saturating_sub(1));
+                self.fields = sf.appearance(self.slot).unwrap_or_default();
+                self.save = Some(sf);
+                self.scale_bug = self.detect_scale_bug(n);
+                self.dirty = false;
+                self.status = format!(
+                    "Loaded backup {name} ({n} character(s)) into the working copy — inspect it, then “Apply to game…” to restore it. Your live save is untouched until then."
+                );
+            }
+            Err(e) => {
+                self.save = None;
+                self.fields = Vec::new();
+                self.note(format!("Backup {name} would not load: {e}"));
+            }
+        }
+        self.scan_backups();
     }
 
     /// Stash a save failure as a full, copy-pasteable report (error + why + app/OS
@@ -670,6 +773,7 @@ impl App {
             Err(e) => self.note(format!("Aborted — could not back up live save: {e}")),
         }
         self.confirm_live = false;
+        self.scan_backups();
     }
 }
 
@@ -745,10 +849,17 @@ impl eframe::App for App {
         }
 
         if self.save.is_none() {
+            // No loaded save. Still offer the backups list — restoring a backup
+            // is MOST needed exactly when the current save won't load.
             let t = self.tr();
             egui::CentralPanel::default().show_inside(ui, |ui| {
-                ui.centered_and_justified(|ui| {
-                    ui.label(RichText::new(t.open_to_begin).italics().color(theme::SUBTEXT));
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.add_space(20.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(RichText::new(t.open_to_begin).italics().color(theme::SUBTEXT));
+                    });
+                    ui.add_space(16.0);
+                    backups_page(self, ui);
                 });
             });
             return;
@@ -788,6 +899,9 @@ impl eframe::App for App {
                         .clicked()
                     {
                         self.category = cat;
+                        if cat == Category::Backups {
+                            self.scan_backups();
+                        }
                     }
                 }
             });
@@ -811,8 +925,54 @@ impl eframe::App for App {
                     colours_page(self, ui, Category::Body);
                 }
                 Category::Looks => looks_page(self, ui),
+                Category::Backups => backups_page(self, ui),
             });
         });
+    }
+}
+
+/// The Backups page: every timestamped backup the editor has made (working copy
+/// + live save), newest first, loadable back into the working copy.
+fn backups_page(app: &mut App, ui: &mut egui::Ui) {
+    let t = app.tr();
+    ui.heading(t.cat_backups);
+    ui.label(RichText::new(t.backups_intro).small().color(theme::SUBTEXT));
+    ui.add_space(6.0);
+
+    if app.backups.is_empty() {
+        ui.label(RichText::new(t.no_backups).italics().color(theme::SUBTEXT));
+        return;
+    }
+    let rows = app.backups.clone();
+    let mut load: Option<PathBuf> = None;
+    card(ui, |ui| {
+        egui::Grid::new("backups").num_columns(4).spacing([14.0, 6.0]).show(ui, |ui| {
+            for b in &rows {
+                let when = chrono::DateTime::from_timestamp(b.ts, 0)
+                    .map(|utc| {
+                        utc.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S").to_string()
+                    })
+                    .unwrap_or_else(|| "?".into());
+                ui.label(when);
+                let src = if b.live { t.backup_live } else { t.backup_work };
+                ui.label(RichText::new(src).small().color(theme::SUBTEXT));
+                ui.label(
+                    RichText::new(format!("{} KB", b.size / 1024)).small().color(theme::SUBTEXT),
+                );
+                let can = app.key.is_some();
+                if ui
+                    .add_enabled(can, egui::Button::new(t.backup_load))
+                    .on_hover_text(b.path.display().to_string())
+                    .clicked()
+                {
+                    load = Some(b.path.clone());
+                }
+                ui.end_row();
+            }
+        });
+    });
+    if let Some(p) = load {
+        app.load_backup(&p);
     }
 }
 
@@ -1561,6 +1721,46 @@ fn pretty(name: &str) -> String {
         out.push(ch);
     }
     out
+}
+
+#[cfg(test)]
+mod backup_tests {
+    use super::*;
+
+    #[test]
+    fn ts_parses_from_backup_names() {
+        // Both backup families use `<save-name>.<unix-seconds>.bak`.
+        assert_eq!(backup_ts_from_name("SaveData.work.sav.1783726101.bak"), Some(1783726101));
+        assert_eq!(backup_ts_from_name("SaveData.sav.1720000000.bak"), Some(1720000000));
+        assert_eq!(backup_ts_from_name("SaveData.sav.bak"), None);
+        assert_eq!(backup_ts_from_name("SaveData.sav"), None);
+    }
+
+    #[test]
+    fn scan_finds_only_bak_files_and_sorting_is_newest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "SaveData.work.sav.100.bak",
+            "SaveData.work.sav.300.bak",
+            "SaveData.work.sav.200.bak",
+            "SaveData.work.sav", // not a backup — must be skipped
+            "notes.txt",
+        ] {
+            std::fs::write(dir.path().join(name), b"x").unwrap();
+        }
+        let mut v = scan_backup_dir(dir.path(), false);
+        assert_eq!(v.len(), 3);
+        v.sort_by_key(|b| std::cmp::Reverse(b.ts));
+        let ts: Vec<i64> = v.iter().map(|b| b.ts).collect();
+        assert_eq!(ts, [300, 200, 100]);
+        assert!(v.iter().all(|b| !b.live));
+    }
+
+    #[test]
+    fn scan_of_missing_dir_is_empty_not_error() {
+        let v = scan_backup_dir(Path::new("/nonexistent/backups"), true);
+        assert!(v.is_empty());
+    }
 }
 
 #[cfg(test)]

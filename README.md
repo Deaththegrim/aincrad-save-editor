@@ -21,6 +21,16 @@ key straight from your running game — no separate tool needed.
 
 ## Changes
 
+**0.1.19** — **backup loading**: a new *Backups* page lists every timestamped
+backup the editor has ever made — of the working copy (in the editor's data
+folder) and of your live save (in `backups/` next to the game's save file) —
+newest first, with local date-times. *Load* puts a backup into the working copy
+so you can inspect it like any save (your current working copy is itself backed
+up first — nothing is ever lost); your live save is only touched when you then
+choose *Apply to game…*. The page also appears on the "Open a save to begin"
+screen, because restoring a backup matters most exactly when your save won't
+load.
+
 **0.1.18** — **voice previews**: picking a voice now plays one of the character
 creator's own sample lines for it, and a ▶ button under the chips replays the
 current voice (each press cycles through its six creator lines). An EN/JP toggle

@@ -92,6 +92,12 @@ pub fn thumbs_dir() -> PathBuf {
     data_root().join("thumbnails")
 }
 
+/// Where the working copy's timestamped backups land (see `aml_save::backup`).
+/// The LIVE save's backups live next to the game's save file instead.
+pub fn work_backups_dir() -> PathBuf {
+    data_root().join("backups")
+}
+
 /// Where the bundled voice-preview clips live (`voices/<lang>/<Voice>_<n>.ogg`).
 pub fn voices_dir() -> PathBuf {
     data_root().join("voices")
