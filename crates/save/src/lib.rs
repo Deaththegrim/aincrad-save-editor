@@ -10,7 +10,9 @@
 
 pub mod appearance;
 pub mod crypto;
+pub mod hygiene;
 pub mod mode;
+pub mod palette;
 pub mod preset;
 
 use std::path::{Path, PathBuf};
@@ -112,6 +114,20 @@ impl SaveFile {
         let enc = crypto::encrypt(&self.key, &plain)?;
         std::fs::write(path, enc)?;
         Ok(())
+    }
+
+    /// Dev/diagnostic access to the parsed save tree, for examples/tools
+    /// (dump_tree, scan_items). NOT used by the editor UI — the editor's
+    /// surface stays appearance-only.
+    #[doc(hidden)]
+    pub fn save_tree(&self) -> &Save {
+        &self.save
+    }
+
+    /// Mutable counterpart of [`save_tree`] (dev tools only; see its note).
+    #[doc(hidden)]
+    pub fn save_tree_mut(&mut self) -> &mut Save {
+        &mut self.save
     }
 
     /// How many character slots the save holds.
@@ -860,5 +876,89 @@ mod tests {
         file.set_appearance(0, "Nose", orig_nose).unwrap();
         let restored = { let mut v = Vec::new(); file.save.write(&mut v).unwrap(); v };
         assert_eq!(raw_plain, restored, "restore must reproduce the exact plaintext");
+    }
+}
+
+#[cfg(test)]
+mod palette_tests {
+    use crate::appearance::color_valid;
+    use crate::palette;
+
+    /// Every colour field the save carries (from `dump_tree` on a real save).
+    const COLOR_FIELDS: &[&str] = &[
+        "CustomColorSkin",
+        "CustomColorFaceR",
+        "CustomColorFaceG",
+        "CustomColorFaceB",
+        "CustomColorPupilR",
+        "CustomColorPupilG",
+        "CustomColorPupilB",
+        "CustomColorHairR",
+        "CustomColorHairG",
+        "CustomColorHairB",
+        "CustomColorEye",
+        "CustomColorBeard",
+        "CustomColorLip",
+        "UpperCustomColorR",
+        "UpperCustomColorG",
+        "UpperCustomColorB",
+        "UpperCustomColorA",
+        "GlovesCustomColorR",
+        "GlovesCustomColorG",
+        "GlovesCustomColorB",
+        "GlovesCustomColorA",
+        "LowerCustomColorR",
+        "LowerCustomColorG",
+        "LowerCustomColorB",
+        "LowerCustomColorA",
+    ];
+
+    #[test]
+    fn every_save_colour_field_has_a_palette() {
+        for f in COLOR_FIELDS {
+            assert!(palette::palette_for(f).is_some(), "{f} has no creator palette");
+        }
+    }
+
+    #[test]
+    fn palette_sizes_match_the_game_tables() {
+        assert_eq!(palette::SKIN.len(), 10);
+        assert_eq!(palette::HAIR.len(), 50);
+        assert_eq!(palette::EYE.len(), 50);
+        assert_eq!(palette::EYE_POINT.len(), 50);
+        assert_eq!(palette::EYELINE.len(), 50);
+        assert_eq!(palette::LIP.len(), 25);
+        assert_eq!(palette::COSTUME.len(), 50);
+    }
+
+    #[test]
+    fn every_swatch_write_passes_the_colour_gate() {
+        for f in COLOR_FIELDS {
+            for s in palette::palette_for(f).unwrap() {
+                for (name, c) in palette::swatch_writes(f, s) {
+                    assert!(color_valid(&c), "{name} from {f}/{} invalid", s.name);
+                    assert!(
+                        c.iter().all(|v| (0.0..=1.0).contains(v)),
+                        "{name} from {f}/{} out of gamut",
+                        s.name
+                    );
+                }
+            }
+        }
+    }
+
+    /// Pins the creator's layer wiring against a real creator-made character
+    /// (Skin_3 pick): body skin + face base take the row's SubColor, the face
+    /// highlight takes MainColor. Guards regeneration drift too.
+    #[test]
+    fn skin_swatch_mirrors_the_creator() {
+        let s = &palette::SKIN[2]; // Skin_3
+        assert_eq!(s.sub, [0.590619, 0.38643, 0.283149]);
+        assert_eq!(s.main, [0.814847, 0.564712, 0.445201]);
+        let w = palette::swatch_writes("CustomColorSkin", s);
+        assert_eq!(w.len(), 3);
+        assert_eq!(w[0], ("CustomColorSkin".into(), [0.590619, 0.38643, 0.283149, 1.0]));
+        assert_eq!(w[1], ("CustomColorFaceG".into(), [0.590619, 0.38643, 0.283149, 1.0]));
+        assert_eq!(w[2], ("CustomColorFaceR".into(), [0.814847, 0.564712, 0.445201, 1.0]));
     }
 }

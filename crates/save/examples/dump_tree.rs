@@ -1,8 +1,8 @@
 //! Dev tool: dump the property tree of a local save (names/types, values
 //! elided; strings shown) to survey what the editor doesn't expose yet.
 //!
-//! Usage: cargo run -p aml-save --example dump_tree [depth]
-//! Reads ~/eoa-backup/aes.key + ~/eoa-backup/saves/SaveData.work.sav.
+//! Usage: cargo run -p aml-save --example dump_tree [depth] [save-path]
+//! Reads ~/eoa-backup/aes.key + ~/eoa-backup/saves/SaveData.work.sav (or [save-path]).
 
 use uesave::{Properties, Property, Save, StructValue, ValueVec};
 
@@ -10,10 +10,12 @@ fn main() {
     let home = std::env::var("HOME").unwrap();
     let depth: usize =
         std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(4);
+    let save_path = std::env::args()
+        .nth(2)
+        .unwrap_or_else(|| format!("{home}/eoa-backup/saves/SaveData.work.sav"));
     let key_hex =
         std::fs::read_to_string(format!("{home}/eoa-backup/aes.key")).unwrap();
-    let raw =
-        std::fs::read(format!("{home}/eoa-backup/saves/SaveData.work.sav")).unwrap();
+    let raw = std::fs::read(save_path).unwrap();
     let key = aml_save::crypto::parse_key(key_hex.trim()).unwrap();
     let plain = aml_save::crypto::decrypt(&key, &raw).unwrap();
     let save = Save::read(&mut std::io::Cursor::new(&plain)).unwrap();

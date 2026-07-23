@@ -1,4 +1,4 @@
-//! aml-save-editor — a friendly visual editor for Echoes of Aincrad character
+//! Aincrad Save Editor — a friendly visual editor for Echoes of Aincrad character
 //! appearance. Decrypts the save (via aml-save), shows the real in-game part
 //! thumbnails so players pick a face/hair/eyes by sight rather than by number,
 //! and writes changes back safely (work copy first, live save only on confirm,
@@ -283,6 +283,8 @@ struct App {
     preview: voice_preview::VoicePreview,
     /// Backups page rows, rescanned when the page is opened or a backup is made.
     backups: Vec<BackupEntry>,
+    /// Colour fields whose game-palette swatch strip is expanded (UI-only).
+    swatches_open: std::collections::HashSet<String>,
 }
 
 impl App {
@@ -327,6 +329,7 @@ impl App {
                 },
             ),
             backups: Vec::new(),
+            swatches_open: std::collections::HashSet::new(),
         };
         app.scan_looks();
         app.scan_backups();
@@ -1583,7 +1586,8 @@ fn colours_page(app: &mut App, ui: &mut egui::Ui, cat: Category) {
     if colors.is_empty() && toggles.is_empty() {
         return;
     }
-    ui.heading(app.tr().colours);
+    let t = app.tr();
+    ui.heading(t.colours);
     ui.add_space(3.0);
     card(ui, |ui| {
         // One-click repair for the common "face doesn't match my skin tone" case:
@@ -1610,36 +1614,60 @@ fn colours_page(app: &mut App, ui: &mut egui::Ui, cat: Category) {
             egui::Grid::new(("colors", cat as u8)).num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
                 for (name, c) in &colors {
                     ui.label(pretty(name));
-                    let mut rgba = *c;
-                    if ui.color_edit_button_rgba_unmultiplied(&mut rgba).changed() {
-                        // Keep each channel a sane, finite [0,1] value so a stray
-                        // keyboard entry can't write an out-of-gamut / NaN colour.
-                        let clean = rgba.map(|x| if x.is_finite() { x.clamp(0.0, 1.0) } else { 0.0 });
-                        // Skin tone drives the face's skin layers so the face stays
-                        // matched to the body. The face is three colours: FaceG is the
-                        // base skin (equals the body skin), FaceR a lighter highlight.
-                        // Shift both by the same delta as the skin change to preserve
-                        // each layer's relationship (FaceB, a dark detail, is left alone).
-                        // Without this, changing skin leaves a mismatched face — the
-                        // #1 thing people hit.
-                        if name == "CustomColorSkin" {
-                            let d = [clean[0] - c[0], clean[1] - c[1], clean[2] - c[2]];
-                            for face in ["CustomColorFaceG", "CustomColorFaceR"] {
-                                if let Some(FieldValue::Color(fc)) =
-                                    app.field(face).map(|f| f.value.clone())
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            let mut rgba = *c;
+                            if ui.color_edit_button_rgba_unmultiplied(&mut rgba).changed() {
+                                // Keep each channel a sane, finite [0,1] value so a stray
+                                // keyboard entry can't write an out-of-gamut / NaN colour.
+                                let clean =
+                                    rgba.map(|x| if x.is_finite() { x.clamp(0.0, 1.0) } else { 0.0 });
+                                // Skin tone drives the face's skin layers so the face stays
+                                // matched to the body. The face is three colours: FaceG is the
+                                // base skin (equals the body skin), FaceR a lighter highlight.
+                                // Shift both by the same delta as the skin change to preserve
+                                // each layer's relationship (FaceB, a dark detail, is left alone).
+                                // Without this, changing skin leaves a mismatched face — the
+                                // #1 thing people hit.
+                                if name == "CustomColorSkin" {
+                                    let d = [clean[0] - c[0], clean[1] - c[1], clean[2] - c[2]];
+                                    for face in ["CustomColorFaceG", "CustomColorFaceR"] {
+                                        if let Some(FieldValue::Color(fc)) =
+                                            app.field(face).map(|f| f.value.clone())
+                                        {
+                                            let nc = [
+                                                (fc[0] + d[0]).clamp(0.0, 1.0),
+                                                (fc[1] + d[1]).clamp(0.0, 1.0),
+                                                (fc[2] + d[2]).clamp(0.0, 1.0),
+                                                fc[3],
+                                            ];
+                                            app.set(face, FieldValue::Color(nc));
+                                        }
+                                    }
+                                }
+                                app.set(name, FieldValue::Color(clean));
+                            }
+                            if aml_save::palette::palette_for(name).is_some() {
+                                let mut open = app.swatches_open.contains(name.as_str());
+                                if ui
+                                    .toggle_value(&mut open, RichText::new(t.game_palette).small())
+                                    .on_hover_text(t.game_palette_hint)
+                                    .changed()
                                 {
-                                    let nc = [
-                                        (fc[0] + d[0]).clamp(0.0, 1.0),
-                                        (fc[1] + d[1]).clamp(0.0, 1.0),
-                                        (fc[2] + d[2]).clamp(0.0, 1.0),
-                                        fc[3],
-                                    ];
-                                    app.set(face, FieldValue::Color(nc));
+                                    if open {
+                                        app.swatches_open.insert(name.clone());
+                                    } else {
+                                        app.swatches_open.remove(name.as_str());
+                                    }
                                 }
                             }
+                        });
+                        if app.swatches_open.contains(name.as_str()) {
+                            if let Some(pal) = aml_save::palette::palette_for(name) {
+                                swatch_strip(app, ui, name, c, pal);
+                            }
                         }
-                        app.set(name, FieldValue::Color(clean));
-                    }
+                    });
                     ui.end_row();
                 }
             });
@@ -1651,6 +1679,55 @@ fn colours_page(app: &mut App, ui: &mut egui::Ui, cat: Category) {
                         .italics()
                         .color(theme::SUBTEXT),
                 );
+            }
+        }
+    });
+}
+
+/// A wrapped strip of the character creator's own swatches for `field`.
+/// Each square previews exactly what a click writes to THIS field (sub-layer
+/// fields take the row's SubColor), and clicking applies the creator's full
+/// layer wiring via `palette::swatch_writes` — so a skin pick re-tints the
+/// face layers the same way the in-game creator does. The palettes' row names
+/// don't describe their colours (dev leftovers), so tooltips show the swatch
+/// number + sRGB hex instead.
+fn swatch_strip(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    field: &str,
+    current: &[f32; 4],
+    pal: &'static [aml_save::palette::Swatch],
+) {
+    ui.set_max_width(324.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+        for (i, s) in pal.iter().enumerate() {
+            let target = aml_save::palette::swatch_writes(field, s)
+                .into_iter()
+                .find(|(n, _)| n == field)
+                .map(|(_, c)| c)
+                .unwrap_or([s.main[0], s.main[1], s.main[2], 1.0]);
+            let selected = current.iter().zip(&target).all(|(a, b)| (a - b).abs() < 1e-4);
+            // Save colours are linear; Color32::from(Rgba) applies the gamma the
+            // game's own materials do, so the square matches the in-game shade.
+            let col = egui::Color32::from(egui::Rgba::from_rgb(target[0], target[1], target[2]));
+            let (rect, resp) =
+                ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());
+            let stroke = if selected {
+                egui::Stroke::new(2.0, theme::TEXT)
+            } else if resp.hovered() {
+                egui::Stroke::new(1.0, theme::OVERLAY)
+            } else {
+                egui::Stroke::new(1.0, theme::SURFACE2)
+            };
+            let painter = ui.painter();
+            painter.rect_filled(rect, 3.0, col);
+            painter.rect_stroke(rect, 3.0, stroke, egui::StrokeKind::Inside);
+            let hex = format!("#{:02X}{:02X}{:02X}", col.r(), col.g(), col.b());
+            if resp.on_hover_text(format!("{} · {hex}", i + 1)).clicked() {
+                for (n, c) in aml_save::palette::swatch_writes(field, s) {
+                    app.set(&n, FieldValue::Color(c));
+                }
             }
         }
     });

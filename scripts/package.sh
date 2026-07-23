@@ -29,7 +29,14 @@ package() { # $1=os  $2=exe-name-in-pack  $3=built-binary-path
   fi
   local stage; stage="$(mktemp -d)"
   ( cd "$stage" && unzip -q "$zip" )              # reuse thumbnails/font/etc.
+  # Drop any previously-shipped binary names so a rename can't leave two exes
+  # in the zip (the payload is reused across releases).
+  rm -f "$stage/$name/aml-save-editor" "$stage/$name/aml-save-editor.exe" \
+        "$stage/$name/Aincrad-Save-Editor" "$stage/$name/Aincrad-Save-Editor.exe"
   cp "$bin" "$stage/$name/$exe"                   # swap in the fresh binary
+  # Regenerate the in-zip README from the tracked template (the reused payload
+  # once carried a 0.1.8-era README for six releases straight).
+  sed "s/__VER__/$ver/" "$here/scripts/zip-readme.txt" > "$stage/$name/README.txt"
   [ -f "$here/LICENSE" ] && cp "$here/LICENSE" "$stage/$name/LICENSE.txt"
   rm -f "$zip"
   ( cd "$stage" && zip -qr "$zip" "$name" )
@@ -39,10 +46,10 @@ package() { # $1=os  $2=exe-name-in-pack  $3=built-binary-path
 
 echo "Building Linux (native)…"
 cargo build --release -p aml-save-editor
-package linux   aml-save-editor     "$here/target/release/aml-save-editor"
+package linux   Aincrad-Save-Editor     "$here/target/release/aml-save-editor"
 
 echo "Building Windows (MSVC via cargo-xwin)…"
 cargo xwin build --release -p aml-save-editor --target x86_64-pc-windows-msvc
-package windows aml-save-editor.exe "$here/target/x86_64-pc-windows-msvc/release/aml-save-editor.exe"
+package windows Aincrad-Save-Editor.exe "$here/target/x86_64-pc-windows-msvc/release/aml-save-editor.exe"
 
 echo "Done. dist:"; ls -la "$dist"/*.zip
